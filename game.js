@@ -41,6 +41,45 @@
     return -CFG.WHEEL_Y + CFG.WHEEL_R + 0.12;
   }
 
+  // concept-03 精靈：車身朝右，單位為公尺；inBody 裡 y 朝上
+  const SPRITE = {
+    mPerPx: 0.0026923076923076926,
+    body: { src: "assets/car-body.webp", w: 1124, h: 433, ox: -1.462076923076923, oy: 0.6868461538461538 },
+    wheel: { src: "assets/car-wheel.webp", w: 220, h: 220 },
+    roof: {
+      src: "assets/car-roof.webp", w: 412, h: 52,
+      ox: -0.8266923076923076, oy: 0.6706923076923077,
+      cx: -0.2720769230769229, cy: 0.6006923076923077
+    }
+  };
+  const spriteImgs = { body: new Image(), wheel: new Image(), roof: new Image() };
+  let spritesReady = false;
+  (function preloadSprites() {
+    const keys = ["body", "wheel", "roof"];
+    let left = keys.length;
+    function tick() {
+      left -= 1;
+      if (left <= 0) spritesReady = true;
+    }
+    keys.forEach(function (k) {
+      spriteImgs[k].onload = tick;
+      spriteImgs[k].onerror = tick;
+      spriteImgs[k].src = SPRITE[k].src;
+    });
+  })();
+  function spriteOk(img) { return img && img.complete && img.naturalWidth > 0; }
+  function drawSpriteYUp(img, x, y, wPx, hPx) {
+    // inBody 後座標 y 朝上；用 scale 翻轉影像，避免 drawImage 負高度再翻一次
+    const s = SPRITE.mPerPx;
+    ctx.imageSmoothingEnabled = true;
+    if (ctx.imageSmoothingQuality) ctx.imageSmoothingQuality = "high";
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, -s);
+    ctx.drawImage(img, 0, 0, wPx, hPx);
+    ctx.restore();
+  }
+
   const URL_PARAMS = new URLSearchParams((location.search || "").replace(/^\?/, ""));
   const DEBUG = URL_PARAMS.get("debug") === "1";
   const FAKE_AD = URL_PARAMS.get("fakead") === "1";
@@ -524,10 +563,11 @@
   }
 
   function createCar(world, x, y, withCargo) {
-    // 較低的斜背：頂峰約在車身中段 y=0.56，向短車尾甲板收低（凸多邊形）
+    // 碰撞外形貼齊 concept-03 精靈輪廓（凸包，最多 8 點）
     const chassisVerts = [
-      { x: -1.15, y: -0.28 }, { x: 1.25, y: -0.28 }, { x: 1.32, y: 0.08 },
-      { x: 0.12, y: 0.50 }, { x: -0.15, y: 0.56 }, { x: -0.90, y: 0.40 }, { x: -1.22, y: 0.14 }
+      { x: 0.0295, y: -0.3378 }, { x: 1.4295, y: -0.3324 }, { x: 1.5345, y: -0.1616 },
+      { x: 1.4295, y: 0.0861 }, { x: 0.2125, y: 0.4657 }, { x: -0.2559, y: 0.5599 },
+      { x: -1.3625, y: 0.2934 }, { x: -1.3732, y: -0.2678 }
     ];
     const chassis = world.createBody({ type: "dynamic", position: { x: x, y: y }, angularDamping: 0.15 });
     const fxC = chassis.createFixture({
@@ -543,9 +583,9 @@
     fxB.setUserData({ kind: "ballast", color: palette.teal });
 
     // 可掉落的車頂殼
-    const roof = world.createBody({ type: "dynamic", position: { x: x - 0.22, y: y + 0.575 } });
+    const roof = world.createBody({ type: "dynamic", position: { x: x + SPRITE.roof.cx, y: y + SPRITE.roof.cy } });
     const fxR = roof.createFixture({
-      shape: new pl.Box(0.40, 0.055),
+      shape: new pl.Box(SPRITE.roof.w * SPRITE.mPerPx * 0.5, SPRITE.roof.h * SPRITE.mPerPx * 0.5),
       density: 0.25, friction: 0.3, filter: filterCar()
     });
     fxR.setUserData({ kind: "roof", color: palette.roof });
@@ -567,8 +607,8 @@
       }, chassis, wheel, wheel.getPosition(), { x: 0, y: 1 }));
       return { body: wheel, joint: joint, torque: motorTorque };
     }
-    const rear = makeWheel(x - 0.82, CFG.TORQUE_REAR);
-    const front = makeWheel(x + 0.88, CFG.TORQUE_FRONT);
+    const rear = makeWheel(x - 0.8051538461538462, CFG.TORQUE_REAR);
+    const front = makeWheel(x + 0.8651538461538463, CFG.TORQUE_FRONT);
 
     const cargo = [];
     if (withCargo) {
@@ -975,7 +1015,7 @@
     if (car && car.chassis) {
       // 含牛欄、排氣管與車頂的外輪廓，再留一點餘裕
       const corners = [
-        [-1.42, -0.35], [1.50, -0.35], [1.50, 0.70], [-1.42, 0.70]
+        [-1.50, -0.52], [1.62, -0.52], [1.62, 0.64], [-1.50, 0.64]
       ];
       for (let i = 0; i < corners.length; i++) addLocal(car.chassis, corners[i][0], corners[i][1]);
     }
@@ -987,7 +1027,7 @@
     });
     if (car.roof) {
       const p = car.roof.getPosition();
-      add(p.x - 0.48, p.y - 0.12); add(p.x + 0.48, p.y + 0.14);
+      add(p.x - 0.62, p.y - 0.10); add(p.x + 0.62, p.y + 0.12);
     }
     if (car.cargo) {
       car.cargo.forEach(function (c) {
@@ -1139,69 +1179,15 @@
 
   function drawBuggyWheel(wheelBody) {
     inBody(wheelBody, function () {
-      const R = CFG.WHEEL_R;
-      // 視覺幾乎等於物理半徑，光滑胎壁，沒有越野胎塊
-      ctx.beginPath();
-      ctx.arc(0, 0, R, 0, Math.PI * 2);
-      ctx.fillStyle = "#1a1a1d";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.97, 0, Math.PI * 2);
-      ctx.strokeStyle = "#2c2c32";
-      ctx.lineWidth = 0.018;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.82, 0, Math.PI * 2);
-      ctx.fillStyle = "#2a2a30";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.78, 0, Math.PI * 2);
-      const lip = ctx.createLinearGradient(-R, 0, R, 0);
-      lip.addColorStop(0, "#7a7e86");
-      lip.addColorStop(0.45, "#d8dce2");
-      lip.addColorStop(1, "#6a6e76");
-      ctx.fillStyle = lip;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.70, 0, Math.PI * 2);
-      const dish = ctx.createRadialGradient(-0.04, 0.04, 0.01, 0, 0, R * 0.70);
-      dish.addColorStop(0, "#9aa2aa");
-      dish.addColorStop(1, "#5a616a");
-      ctx.fillStyle = dish;
-      ctx.fill();
-      const spokes = 5;
-      for (let i = 0; i < spokes; i++) {
-        const a = i * Math.PI * 2 / spokes - 0.12;
-        ctx.save();
-        ctx.rotate(a);
+      const img = spriteImgs.wheel;
+      if (!spriteOk(img)) {
         ctx.beginPath();
-        ctx.moveTo(0.035, -0.032);
-        ctx.lineTo(R * 0.62, -0.022);
-        ctx.lineTo(R * 0.65, 0);
-        ctx.lineTo(R * 0.62, 0.022);
-        ctx.lineTo(0.035, 0.032);
-        ctx.closePath();
-        const sg = ctx.createLinearGradient(0.04, 0, R * 0.65, 0);
-        sg.addColorStop(0, "#d8dce2");
-        sg.addColorStop(0.5, "#9aa2aa");
-        sg.addColorStop(1, "#eceef2");
-        ctx.fillStyle = sg;
+        ctx.arc(0, 0, CFG.WHEEL_R, 0, Math.PI * 2);
+        ctx.fillStyle = "#1a1a1d";
         ctx.fill();
-        ctx.restore();
+        return;
       }
-      ctx.beginPath();
-      ctx.arc(0, 0, 0.072, 0, Math.PI * 2);
-      ctx.fillStyle = "#c4c8ce";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(0, 0, 0.038, 0, Math.PI * 2);
-      ctx.fillStyle = "#5a6068";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.96, 0.75, 1.45);
-      ctx.strokeStyle = "rgba(255,255,255,0.18)";
-      ctx.lineWidth = 0.02;
-      ctx.stroke();
+      drawSpriteYUp(img, -SPRITE.wheel.w * SPRITE.mPerPx * 0.5, SPRITE.wheel.h * SPRITE.mPerPx * 0.5, SPRITE.wheel.w, SPRITE.wheel.h);
     });
   }
 
@@ -1209,339 +1195,40 @@
     // 物理懸吊仍在；外觀比照概念圖，不畫出彈簧
   }
 
+  function roofBroken() {
+    if (!car || !car.breakables) return false;
+    for (let i = 0; i < car.breakables.length; i++) {
+      if (car.breakables[i].kind === "roof" && car.breakables[i].broken) return true;
+    }
+    return false;
+  }
+
   function drawHull() {
+    if (!car || !car.chassis) return;
     inBody(car.chassis, function () {
-      const wr = CFG.WHEEL_R;
-      const wY = CFG.WHEEL_Y;
-      const aR = wr + 0.045;
-      function archOver(cx, cy, rx, ry, a0, a1) {
-        for (let i = 0; i <= 16; i++) {
-          const ang = a0 + (a1 - a0) * (i / 16);
-          ctx.lineTo(cx + Math.cos(ang) * rx, cy + Math.sin(ang) * ry);
-        }
+      const img = spriteImgs.body;
+      if (!spriteOk(img)) return;
+      drawSpriteYUp(img, SPRITE.body.ox, SPRITE.body.oy, SPRITE.body.w, SPRITE.body.h);
+      if (roofBroken() && spriteOk(spriteImgs.roof)) {
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-out";
+        drawSpriteYUp(spriteImgs.roof, SPRITE.roof.ox, SPRITE.roof.oy, SPRITE.roof.w, SPRITE.roof.h);
+        ctx.restore();
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-over";
+        ctx.fillStyle = "#1a222c";
+        ctx.fillRect(SPRITE.roof.ox, SPRITE.roof.oy - SPRITE.roof.h * SPRITE.mPerPx, SPRITE.roof.w * SPRITE.mPerPx, SPRITE.roof.h * SPRITE.mPerPx);
+        ctx.restore();
       }
-      function bodyPath() {
-        ctx.beginPath();
-        ctx.moveTo(-1.16, -0.30);
-        ctx.quadraticCurveTo(-1.36, -0.26, -1.34, -0.06);
-        ctx.quadraticCurveTo(-1.32, 0.14, -1.24, 0.20);
-        // 斜背落到接近肩線的短甲板，末端只帶一小段唇翼
-        ctx.quadraticCurveTo(-1.28, 0.26, -1.20, 0.28);
-        ctx.quadraticCurveTo(-1.14, 0.25, -1.00, 0.24);
-        ctx.quadraticCurveTo(-0.52, 0.47, -0.16, 0.54);
-        ctx.quadraticCurveTo(-0.02, 0.54, 0.10, 0.49);
-        ctx.quadraticCurveTo(0.26, 0.32, 0.36, 0.16);
-        ctx.quadraticCurveTo(0.95, 0.10, 1.24, 0.06);
-        ctx.quadraticCurveTo(1.42, 0.04, 1.46, -0.06);
-        ctx.quadraticCurveTo(1.50, -0.16, 1.40, -0.30);
-        ctx.quadraticCurveTo(1.24, -0.34, 1.12, -0.32);
-        const skirtY = -0.32;
-        const sEdge = Math.max(-0.95, Math.min(0.95, (skirtY - wY) / aR));
-        const aEdge = Math.asin(sEdge);
-        archOver(0.88, wY, aR, aR, aEdge, Math.PI - aEdge);
-        ctx.lineTo(-0.30, skirtY);
-        archOver(-0.82, wY, aR, aR, aEdge, Math.PI - aEdge);
-        ctx.closePath();
-      }
-
-      ctx.beginPath();
-      ctx.moveTo(-0.30, -0.32);
-      ctx.lineTo(0.36, -0.32);
-      ctx.lineTo(0.36, -0.24);
-      ctx.lineTo(-0.30, -0.24);
-      ctx.closePath();
-      ctx.fillStyle = "#1a1e26";
-      ctx.fill();
-
-      bodyPath();
-      const g = ctx.createLinearGradient(0, -0.32, 0, 0.60);
-      g.addColorStop(0, "#145a96");
-      g.addColorStop(0.22, "#1a78c4");
-      g.addColorStop(0.52, "#2a92dc");
-      g.addColorStop(0.78, "#5eb4ee");
-      g.addColorStop(1, "#9ad0f5");
-      ctx.fillStyle = g;
-      ctx.fill();
-      ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.028;
-      ctx.stroke();
-
-      ctx.save();
-      bodyPath();
-      ctx.clip();
-      ctx.beginPath();
-      ctx.moveTo(-1.2, 0.20);
-      ctx.quadraticCurveTo(0.2, 0.30, 1.3, 0.10);
-      ctx.strokeStyle = "rgba(220,240,255,0.45)";
-      ctx.lineWidth = 0.045;
-      ctx.stroke();
-      const shade = ctx.createLinearGradient(0, -0.32, 0, 0.00);
-      shade.addColorStop(0, "rgba(8,30,60,0.28)");
-      shade.addColorStop(1, "rgba(8,30,60,0)");
-      ctx.fillStyle = shade;
-      ctx.fillRect(-1.5, -0.34, 3.2, 0.34);
-      ctx.restore();
-
-      function fenderLip(cx) {
-        ctx.beginPath();
-        const rLip = aR + 0.02;
-        const sL = Math.max(-0.95, Math.min(0.95, ((-0.32) - wY) / rLip));
-        const a0 = Math.asin(sL), a1 = Math.PI - a0;
-        for (let i = 0; i <= 16; i++) {
-          const ang = a0 + (a1 - a0) * (i / 16);
-          const x = cx + Math.cos(ang) * rLip, y = wY + Math.sin(ang) * rLip;
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        }
-        ctx.strokeStyle = "#1568aa";
-        ctx.lineWidth = 0.07;
-        ctx.stroke();
-        ctx.strokeStyle = "rgba(200,230,255,0.45)";
-        ctx.lineWidth = 0.018;
-        ctx.stroke();
-      }
-      fenderLip(-0.82);
-      fenderLip(0.88);
-
-      // 肩線
-      ctx.beginPath();
-      ctx.moveTo(-1.08, 0.16);
-      ctx.quadraticCurveTo(-0.10, 0.22, 0.40, 0.16);
-      ctx.quadraticCurveTo(0.95, 0.12, 1.24, 0.08);
-      ctx.strokeStyle = "rgba(10,40,80,0.35)";
-      ctx.lineWidth = 0.022;
-      ctx.stroke();
-
-      // 紅／藍飾條，沿肩線
-      function stripe(yOff, color, w) {
-        ctx.beginPath();
-        ctx.moveTo(-1.00, 0.12 + yOff);
-        ctx.quadraticCurveTo(0.05, 0.18 + yOff, 0.70, 0.14 + yOff);
-        ctx.lineTo(1.14, 0.09 + yOff);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = w;
-        ctx.stroke();
-      }
-      stripe(0.010, "#0c3a68", 0.016);
-      stripe(-0.006, "#e02a3c", 0.015);
-
-      // 長引擎蓋折線
-      ctx.beginPath();
-      ctx.moveTo(0.32, 0.18);
-      ctx.quadraticCurveTo(0.90, 0.12, 1.22, 0.07);
-      ctx.strokeStyle = "rgba(10,40,80,0.25)";
-      ctx.lineWidth = 0.014;
-      ctx.stroke();
-
-      // 車門
-      ctx.beginPath();
-      ctx.moveTo(0.02, -0.28);
-      ctx.lineTo(0.10, 0.18);
-      ctx.strokeStyle = "rgba(8,30,60,0.35)";
-      ctx.lineWidth = 0.016;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.roundRect(0.18, 0.08, 0.10, 0.028, 0.01);
-      ctx.fillStyle = "#0c3a68";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.roundRect(0.195, 0.088, 0.07, 0.012, 0.005);
-      ctx.fillStyle = "#d0d8e4";
-      ctx.fill();
-
-      // 側裙
-      ctx.beginPath();
-      ctx.moveTo(-0.28, -0.32);
-      ctx.lineTo(0.36, -0.32);
-      ctx.lineTo(0.34, -0.26);
-      ctx.lineTo(-0.26, -0.26);
-      ctx.closePath();
-      ctx.fillStyle = "#12151c";
-      ctx.fill();
-
-      // 前輪後方小進氣口
-      ctx.beginPath();
-      ctx.moveTo(0.44, -0.06);
-      ctx.lineTo(0.58, -0.04);
-      ctx.lineTo(0.56, 0.06);
-      ctx.lineTo(0.42, 0.04);
-      ctx.closePath();
-      ctx.fillStyle = "#12151c";
-      ctx.fill();
-
-      // 低寬前保桿，單橫縫，不是雙腎
-      ctx.beginPath();
-      ctx.moveTo(1.18, -0.30);
-      ctx.quadraticCurveTo(1.50, -0.24, 1.50, -0.06);
-      ctx.quadraticCurveTo(1.46, 0.06, 1.28, 0.08);
-      ctx.lineTo(1.20, -0.06);
-      ctx.quadraticCurveTo(1.22, -0.18, 1.18, -0.28);
-      ctx.closePath();
-      const bg = ctx.createLinearGradient(1.20, 0.08, 1.50, -0.30);
-      bg.addColorStop(0, "#5eb4ee");
-      bg.addColorStop(0.45, "#1e82d0");
-      bg.addColorStop(1, "#145a96");
-      ctx.fillStyle = bg;
-      ctx.fill();
-      ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.02;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.roundRect(1.34, -0.16, 0.13, 0.05, 0.02);
-      ctx.fillStyle = "#12151c";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.roundRect(1.30, -0.30, 0.16, 0.036, 0.01);
-      ctx.fillStyle = "#0e1218";
-      ctx.fill();
-
-      function lamp(cx, cy, r) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, r * 1.08, 0, Math.PI * 2);
-        ctx.fillStyle = "#12151c";
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(cx, cy, r * 0.86, 0, Math.PI * 2);
-        const lg = ctx.createRadialGradient(cx - r * 0.22, cy + r * 0.2, r * 0.08, cx, cy, r * 0.86);
-        lg.addColorStop(0, "#ffffff");
-        lg.addColorStop(0.4, "#e8f2ff");
-        lg.addColorStop(1, "#7a9cc8");
-        ctx.fillStyle = lg;
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(cx, cy, r * 0.96, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(230,245,255,0.95)";
-        ctx.lineWidth = r * 0.16;
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.ellipse(1.26, 0.00, 0.15, 0.13, -0.15, 0, Math.PI * 2);
-      ctx.fillStyle = "#12151c";
-      ctx.fill();
-      lamp(1.22, 0.05, 0.072);
-      lamp(1.30, -0.04, 0.062);
-
-      // 短車尾
-      ctx.beginPath();
-      ctx.moveTo(-1.14, -0.28);
-      ctx.quadraticCurveTo(-1.38, -0.22, -1.36, 0.00);
-      ctx.quadraticCurveTo(-1.34, 0.18, -1.18, 0.24);
-      ctx.lineTo(-1.12, 0.02);
-      ctx.quadraticCurveTo(-1.14, -0.12, -1.12, -0.24);
-      ctx.closePath();
-      const rg = ctx.createLinearGradient(-1.14, 0.24, -1.38, -0.28);
-      rg.addColorStop(0, "#4aa0e0");
-      rg.addColorStop(1, "#145a96");
-      ctx.fillStyle = rg;
-      ctx.fill();
-      ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.02;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.roundRect(-1.32, 0.04, 0.14, 0.15, 0.035);
-      ctx.fillStyle = "#3a1014";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.roundRect(-1.30, 0.06, 0.10, 0.11, 0.025);
-      const tg = ctx.createLinearGradient(-1.30, 0.18, -1.20, 0.04);
-      tg.addColorStop(0, "#ffb0a0");
-      tg.addColorStop(0.45, "#e4453c");
-      tg.addColorStop(1, "#7a1418");
-      ctx.fillStyle = tg;
-      ctx.fill();
-
-      function tip(x, y, s) {
-        ctx.beginPath();
-        ctx.ellipse(x, y, 0.032 * s, 0.020 * s, 0, 0, Math.PI * 2);
-        ctx.fillStyle = "#2a2c30";
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(x - 0.008, y, 0.016 * s, 0.010 * s, 0, 0, Math.PI * 2);
-        ctx.fillStyle = "#0e1014";
-        ctx.fill();
-      }
-      tip(-1.38, -0.18, 1);
-      tip(-1.38, -0.23, 1);
-      tip(-1.34, -0.18, 0.75);
-      tip(-1.34, -0.23, 0.75);
-
-      // 兩扇側窗：前門窗＋小後角窗，細深色窗框；不畫駕駛頭
-      const glass = ctx.createLinearGradient(0, 0.20, 0, 0.56);
-      glass.addColorStop(0, "rgba(20, 42, 64, 0.94)");
-      glass.addColorStop(0.55, "rgba(60, 110, 140, 0.80)");
-      glass.addColorStop(1, "rgba(180, 215, 230, 0.70)");
-      function strokeWin() {
-        ctx.fillStyle = glass;
-        ctx.fill();
-        ctx.strokeStyle = "#12151c";
-        ctx.lineWidth = 0.028;
-        ctx.stroke();
-      }
-      // 前門窗（長前擋）
-      ctx.beginPath();
-      ctx.moveTo(0.22, 0.22);
-      ctx.lineTo(0.06, 0.46);
-      ctx.quadraticCurveTo(-0.06, 0.50, -0.22, 0.50);
-      ctx.lineTo(-0.28, 0.22);
-      ctx.closePath();
-      strokeWin();
-      ctx.beginPath();
-      ctx.moveTo(0.16, 0.28);
-      ctx.lineTo(0.04, 0.44);
-      ctx.quadraticCurveTo(-0.06, 0.47, -0.20, 0.47);
-      ctx.strokeStyle = "rgba(220,235,245,0.4)";
-      ctx.lineWidth = 0.012;
-      ctx.stroke();
-      // 較小的後角窗，隨斜背收尖
-      ctx.beginPath();
-      ctx.moveTo(-0.36, 0.22);
-      ctx.lineTo(-0.34, 0.48);
-      ctx.quadraticCurveTo(-0.52, 0.44, -0.70, 0.32);
-      ctx.lineTo(-0.68, 0.22);
-      ctx.closePath();
-      strokeWin();
-      // 隱約座椅，沒有頭的色塊
-      ctx.beginPath();
-      ctx.moveTo(-0.08, 0.24);
-      ctx.quadraticCurveTo(-0.06, 0.40, -0.14, 0.46);
-      ctx.lineTo(-0.22, 0.44);
-      ctx.quadraticCurveTo(-0.16, 0.32, -0.18, 0.24);
-      ctx.closePath();
-      ctx.fillStyle = "rgba(18, 28, 40, 0.28)";
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.roundRect(0.18, 0.20, 0.12, 0.06, 0.016);
-      ctx.fillStyle = "#12151c";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.roundRect(0.225, 0.234, 0.08, 0.036, 0.01);
-      ctx.fillStyle = "#8ab0c4";
-      ctx.fill();
     });
   }
 
   function drawRoofPanel() {
-    if (!car || !car.roof) return;
-    // 完好時車頂已畫在車身上，不再疊一塊突出蓋；只在斷開後畫飛出的薄片
-    const item = (car.breakables || []).find(function (it) { return it.kind === "roof"; });
-    if (item && !item.broken) return;
+    if (!car || !car.roof || !roofBroken()) return;
+    if (!spriteOk(spriteImgs.roof)) return;
     inBody(car.roof, function () {
-      ctx.beginPath();
-      ctx.moveTo(-0.38, -0.04);
-      ctx.quadraticCurveTo(-0.08, 0.04, 0.28, 0.00);
-      ctx.quadraticCurveTo(0.36, -0.03, 0.38, -0.05);
-      ctx.quadraticCurveTo(0.08, -0.07, -0.16, -0.07);
-      ctx.quadraticCurveTo(-0.32, -0.06, -0.38, -0.04);
-      ctx.closePath();
-      const g = ctx.createLinearGradient(0, -0.07, 0, 0.04);
-      g.addColorStop(0, "#1a78c4");
-      g.addColorStop(0.55, "#2a92dc");
-      g.addColorStop(1, "#6eb8ec");
-      ctx.fillStyle = g;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(12,58,104,0.45)";
-      ctx.lineWidth = 0.012;
-      ctx.stroke();
+      const w = SPRITE.roof.w * SPRITE.mPerPx, h = SPRITE.roof.h * SPRITE.mPerPx;
+      drawSpriteYUp(spriteImgs.roof, -w * 0.5, h * 0.5, SPRITE.roof.w, SPRITE.roof.h);
     });
   }
 
