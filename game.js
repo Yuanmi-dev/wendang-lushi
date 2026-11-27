@@ -56,9 +56,9 @@
     paper: "#fbf6ee",
     teal: "#1f7a6f",
     tealLight: "#3aa89b",
-    roof: "#f3efe6",
-    wheel: "#2a2622",
-    hub: "#d9d0c3",
+    roof: "#f4f1ea",
+    wheel: "#1a1a1d",
+    hub: "#9aa0aa",
     wood: "#c9a06a",
     pot: "#c45c36",
     rust: "#a3452f",
@@ -1133,65 +1133,93 @@
   function drawBuggyWheel(wheelBody) {
     inBody(wheelBody, function () {
       const R = CFG.WHEEL_R;
-      const n = 14;
+      // 略放大的視覺輪胎，維持玩具感輪徑，不改物理半徑
+      const Rt = R * 1.13;
       ctx.beginPath();
-      ctx.arc(0, 0, R * 1.08, 0, Math.PI * 2);
-      ctx.fillStyle = "#141210";
+      ctx.arc(0, 0, Rt, 0, Math.PI * 2);
+      ctx.fillStyle = "#141416";
       ctx.fill();
+      const n = 16;
       for (let i = 0; i < n; i++) {
-        const a0 = (i / n) * Math.PI * 2 - 0.04;
-        const a1 = a0 + (Math.PI * 2) / n * 0.58;
+        const a0 = (i / n) * Math.PI * 2;
+        const a1 = a0 + Math.PI * 2 / n * 0.42;
         ctx.beginPath();
-        ctx.arc(0, 0, R * 1.12, a0, a1);
-        ctx.arc(0, 0, R * 0.86, a1, a0, true);
+        ctx.arc(0, 0, Rt * 1.03, a0, a1);
+        ctx.arc(0, 0, Rt * 0.86, a1, a0, true);
         ctx.closePath();
-        ctx.fillStyle = i % 2 ? "#2c2824" : "#1f1c19";
+        ctx.fillStyle = i % 2 ? "#2a2a2e" : "#1a1a1d";
         ctx.fill();
       }
+      // 輪壁與輪圈唇
       ctx.beginPath();
-      ctx.arc(0, 0, R * 0.84, 0, Math.PI * 2);
-      ctx.fillStyle = "#3b3530";
+      ctx.arc(0, 0, R * 0.86, 0, Math.PI * 2);
+      ctx.fillStyle = "#3a3a40";
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(0, 0, R * 0.70, 0, Math.PI * 2);
-      ctx.fillStyle = "#1a1715";
+      ctx.arc(0, 0, R * 0.78, 0, Math.PI * 2);
+      ctx.fillStyle = "#1c1c20";
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(0, 0, R * 0.66, 0, Math.PI * 2);
-      ctx.fillStyle = "#efe8db";
+      ctx.arc(0, 0, R * 0.74, 0, Math.PI * 2);
+      const lip = ctx.createLinearGradient(-R, 0, R, 0);
+      lip.addColorStop(0, "#8a8a92");
+      lip.addColorStop(0.45, "#ececef");
+      lip.addColorStop(1, "#6a6a72");
+      ctx.fillStyle = lip;
       ctx.fill();
+      // 槍色鋁圈
       ctx.beginPath();
-      ctx.arc(0, 0, R * 0.58, 0, Math.PI * 2);
-      const rg = ctx.createRadialGradient(-0.04, 0.04, 0.02, 0, 0, R * 0.58);
-      rg.addColorStop(0, "#cfc6b8");
-      rg.addColorStop(1, "#8c8478");
-      ctx.fillStyle = rg;
+      ctx.arc(0, 0, R * 0.68, 0, Math.PI * 2);
+      const dish = ctx.createRadialGradient(-0.05, 0.05, 0.02, 0, 0, R * 0.68);
+      dish.addColorStop(0, "#6a6e78");
+      dish.addColorStop(1, "#2a2d34");
+      ctx.fillStyle = dish;
       ctx.fill();
-      ctx.strokeStyle = "#f6f1e8";
-      ctx.lineWidth = 0.05;
-      for (let i = 0; i < 5; i++) {
-        const a = i * Math.PI * 2 / 5;
+      // 五幅運動輪輻
+      const spokes = 5;
+      for (let i = 0; i < spokes; i++) {
+        const a = i * Math.PI * 2 / spokes - 0.2;
+        ctx.save();
+        ctx.rotate(a);
         ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * 0.09, Math.sin(a) * 0.09);
-        ctx.lineTo(Math.cos(a) * R * 0.55, Math.sin(a) * R * 0.55);
-        ctx.stroke();
+        ctx.moveTo(0.05, -0.045);
+        ctx.lineTo(R * 0.62, -0.028);
+        ctx.lineTo(R * 0.64, 0);
+        ctx.lineTo(R * 0.62, 0.028);
+        ctx.lineTo(0.05, 0.045);
+        ctx.closePath();
+        const sg = ctx.createLinearGradient(0.05, 0, R * 0.64, 0);
+        sg.addColorStop(0, "#d8d8de");
+        sg.addColorStop(0.4, "#9aa0aa");
+        sg.addColorStop(1, "#ececf0");
+        ctx.fillStyle = sg;
+        ctx.fill();
+        ctx.restore();
       }
       ctx.beginPath();
-      ctx.arc(0, 0, 0.095, 0, Math.PI * 2);
-      ctx.fillStyle = "#e8e1d4";
+      ctx.arc(0, 0, 0.11, 0, Math.PI * 2);
+      ctx.fillStyle = "#2c3038";
       ctx.fill();
-      ctx.strokeStyle = "#7a746a";
-      ctx.lineWidth = 0.018;
+      ctx.beginPath();
+      ctx.arc(0, 0, 0.078, 0, Math.PI * 2);
+      ctx.fillStyle = "#1a3a6e";
+      ctx.fill();
+      ctx.strokeStyle = "#e8e6e1";
+      ctx.lineWidth = 0.012;
       ctx.stroke();
-      for (let i = 0; i < 5; i++) {
-        const a = i * Math.PI * 2 / 5 + 0.32;
-        ctx.beginPath();
-        ctx.arc(Math.cos(a) * 0.05, Math.sin(a) * 0.05, 0.012, 0, Math.PI * 2);
-        ctx.fillStyle = "#5c574f";
-        ctx.fill();
-      }
+      // 中心小標（實心深藍圓，不是藍白四分圓）
       ctx.beginPath();
-      ctx.arc(0, 0, R * 0.99, 0.65, 1.55);
+      ctx.moveTo(-0.03, 0.01);
+      ctx.lineTo(0.03, 0.01);
+      ctx.moveTo(0, 0.01);
+      ctx.lineTo(0, -0.032);
+      ctx.moveTo(-0.024, -0.012);
+      ctx.lineTo(0.024, -0.012);
+      ctx.strokeStyle = "#f4f1ea";
+      ctx.lineWidth = 0.01;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.99, 0.7, 1.5);
       ctx.strokeStyle = "rgba(255,255,255,0.22)";
       ctx.lineWidth = 0.03;
       ctx.stroke();
@@ -1207,16 +1235,16 @@
         const wp = car.chassis.getLocalPoint(w.body.getPosition());
         const ax = pair[1];
         const inboard = ax + (pair[0] === "rear" ? 0.22 : -0.22);
-        ctx.strokeStyle = "#5a5550";
-        ctx.lineWidth = 0.058;
+        ctx.strokeStyle = "#3a3d44";
+        ctx.lineWidth = 0.055;
         ctx.beginPath();
-        ctx.moveTo(inboard, -0.14);
+        ctx.moveTo(inboard, -0.12);
         ctx.lineTo(wp.x, wp.y);
         ctx.stroke();
-        ctx.strokeStyle = "#9a948a";
-        ctx.lineWidth = 0.028;
+        ctx.strokeStyle = "#b0b4bc";
+        ctx.lineWidth = 0.022;
         ctx.beginPath();
-        ctx.moveTo(inboard, -0.14);
+        ctx.moveTo(inboard, -0.12);
         ctx.lineTo(wp.x, wp.y);
         ctx.stroke();
         const x0 = ax, y0 = 0.12, x1 = wp.x, y1 = wp.y + 0.06;
@@ -1232,238 +1260,409 @@
           ctx.lineTo(x0 + dx * t + nx * off, y0 + dy * t + ny * off);
         }
         ctx.lineTo(x1, y1);
-        ctx.strokeStyle = "#d2c6b0";
-        ctx.lineWidth = 0.038;
+        ctx.strokeStyle = "#c8ccd4";
+        ctx.lineWidth = 0.036;
         ctx.stroke();
-        ctx.fillStyle = "#6e6860";
-        ctx.beginPath(); ctx.arc(x0, y0, 0.035, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(wp.x, wp.y, 0.045, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#4a4e56";
+        ctx.beginPath(); ctx.arc(x0, y0, 0.032, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(wp.x, wp.y, 0.042, 0, Math.PI * 2); ctx.fill();
       });
     });
   }
 
+  function drawYuanBadge(x, y, s) {
+    ctx.beginPath();
+    ctx.arc(x, y, s, 0, Math.PI * 2);
+    ctx.fillStyle = "#0e2a58";
+    ctx.fill();
+    ctx.strokeStyle = "#f4f1ea";
+    ctx.lineWidth = s * 0.14;
+    ctx.stroke();
+    ctx.strokeStyle = "#f7f4ee";
+    ctx.lineWidth = s * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(x - s * 0.42, y + s * 0.10);
+    ctx.lineTo(x + s * 0.42, y + s * 0.10);
+    ctx.moveTo(x, y + s * 0.10);
+    ctx.lineTo(x, y - s * 0.42);
+    ctx.moveTo(x - s * 0.36, y - s * 0.16);
+    ctx.lineTo(x + s * 0.36, y - s * 0.16);
+    ctx.stroke();
+  }
+
   function drawHull() {
     inBody(car.chassis, function () {
-      // 底盤陰影
-      polyPath([[-1.14, -0.30], [1.24, -0.30], [1.30, -0.18], [-1.20, -0.18]]);
-      ctx.fillStyle = "#0a2e2b";
-      ctx.fill();
-
-      // 主車體（底部挖出輪拱，讓輪胎與懸吊露出）
       function archOver(cx, cy, rx, ry, a0, a1) {
-        for (let i = 0; i <= 12; i++) {
-          const ang = a0 + (a1 - a0) * (i / 12);
+        for (let i = 0; i <= 14; i++) {
+          const ang = a0 + (a1 - a0) * (i / 14);
           ctx.lineTo(cx + Math.cos(ang) * rx, cy + Math.sin(ang) * ry);
         }
       }
+      function bodyPath() {
+        // 大車艙、短圓車頭、短後懸的 Q 版掀背輪廓
+        ctx.beginPath();
+        ctx.moveTo(-1.16, -0.18);
+        ctx.quadraticCurveTo(-1.34, -0.14, -1.32, 0.02);
+        ctx.quadraticCurveTo(-1.28, 0.24, -1.14, 0.36);
+        ctx.quadraticCurveTo(-1.08, 0.62, -0.90, 0.73);
+        ctx.quadraticCurveTo(-0.40, 0.84, 0.14, 0.72);
+        ctx.quadraticCurveTo(0.34, 0.64, 0.44, 0.30);
+        ctx.quadraticCurveTo(0.62, 0.22, 1.02, 0.14);
+        ctx.quadraticCurveTo(1.28, 0.12, 1.38, 0.02);
+        ctx.quadraticCurveTo(1.44, -0.08, 1.30, -0.20);
+        archOver(0.88, -0.42, 0.48, 0.55, 0.34, Math.PI - 0.34);
+        ctx.lineTo(-0.34, -0.20);
+        archOver(-0.82, -0.42, 0.48, 0.55, 0.34, Math.PI - 0.34);
+        ctx.closePath();
+      }
+
       ctx.beginPath();
-      ctx.moveTo(-1.22, -0.20);
-      ctx.lineTo(-1.28, 0.02);
-      ctx.lineTo(-1.22, 0.22);
-      ctx.lineTo(-1.02, 0.70);
-      ctx.lineTo(-0.06, 0.70);
-      ctx.lineTo(0.16, 0.34);
-      ctx.lineTo(0.48, 0.22);
-      ctx.lineTo(1.34, 0.10);
-      ctx.lineTo(1.36, -0.08);
-      ctx.lineTo(1.26, -0.20);
-      archOver(0.88, -0.42, 0.47, 0.54, 0.38, Math.PI - 0.38);
-      ctx.lineTo(-0.36, -0.20);
-      archOver(-0.82, -0.42, 0.47, 0.54, 0.38, Math.PI - 0.38);
+      ctx.moveTo(-1.16, -0.22);
+      ctx.lineTo(1.26, -0.22);
+      ctx.lineTo(1.30, -0.14);
+      ctx.lineTo(-1.20, -0.14);
       ctx.closePath();
-      const g = ctx.createLinearGradient(0, -0.28, 0, 0.74);
-      g.addColorStop(0, "#0c403b");
-      g.addColorStop(0.4, "#17665e");
-      g.addColorStop(1, "#2aa394");
+      ctx.fillStyle = "#1a1e26";
+      ctx.fill();
+
+      bodyPath();
+      const g = ctx.createLinearGradient(0, -0.24, 0, 0.82);
+      g.addColorStop(0, "#163a70");
+      g.addColorStop(0.22, "#1c5fa8");
+      g.addColorStop(0.50, "#2f86d2");
+      g.addColorStop(0.78, "#6eb4ea");
+      g.addColorStop(1, "#a8d4f4");
       ctx.fillStyle = g;
       ctx.fill();
-      ctx.strokeStyle = "#0a2c29";
-      ctx.lineWidth = 0.034;
+      ctx.strokeStyle = "#0e2a58";
+      ctx.lineWidth = 0.030;
       ctx.stroke();
 
-      // 腰線高光
+      ctx.save();
+      bodyPath();
+      ctx.clip();
+      // 金屬高光
       ctx.beginPath();
-      ctx.moveTo(-1.10, 0.10);
-      ctx.lineTo(0.40, 0.14);
-      ctx.lineTo(1.20, 0.04);
-      ctx.strokeStyle = "rgba(255,255,255,0.22)";
-      ctx.lineWidth = 0.028;
+      ctx.moveTo(-1.2, 0.20);
+      ctx.quadraticCurveTo(0.15, 0.32, 1.28, 0.12);
+      ctx.strokeStyle = "rgba(220,240,255,0.55)";
+      ctx.lineWidth = 0.05;
       ctx.stroke();
+      // 下緣較深，做出低趴感
+      const shade = ctx.createLinearGradient(0, -0.22, 0, 0.12);
+      shade.addColorStop(0, "rgba(8,24,48,0.35)");
+      shade.addColorStop(1, "rgba(8,24,48,0)");
+      ctx.fillStyle = shade;
+      ctx.fillRect(-1.5, -0.24, 3.2, 0.36);
+      ctx.restore();
 
-      // 輪拱眉（加寬葉子板）
       function fenderLip(cx) {
         ctx.beginPath();
-        for (let i = 0; i <= 12; i++) {
-          const ang = 0.35 + (Math.PI - 0.70) * (i / 12);
+        for (let i = 0; i <= 14; i++) {
+          const ang = 0.32 + (Math.PI - 0.64) * (i / 14);
           const x = cx + Math.cos(ang) * 0.52, y = -0.42 + Math.sin(ang) * 0.58;
           if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         }
-        ctx.strokeStyle = "#1d7a71";
-        ctx.lineWidth = 0.09;
+        ctx.strokeStyle = "#1a4a86";
+        ctx.lineWidth = 0.085;
         ctx.stroke();
-        ctx.strokeStyle = "rgba(255,255,255,0.18)";
-        ctx.lineWidth = 0.025;
+        ctx.strokeStyle = "rgba(200,230,255,0.55)";
+        ctx.lineWidth = 0.022;
         ctx.stroke();
       }
       fenderLip(-0.82);
       fenderLip(0.88);
 
-      // 引擎蓋
-      polyPath([[0.18, 0.20], [1.12, 0.10], [1.16, 0.00], [0.22, 0.08]]);
-      ctx.fillStyle = "rgba(10,40,38,0.28)";
-      ctx.fill();
+      // 肩線
       ctx.beginPath();
-      ctx.moveTo(0.30, 0.16);
-      ctx.lineTo(1.06, 0.07);
-      ctx.strokeStyle = "rgba(255,255,255,0.12)";
-      ctx.lineWidth = 0.02;
+      ctx.moveTo(-1.10, 0.17);
+      ctx.quadraticCurveTo(-0.15, 0.24, 0.42, 0.20);
+      ctx.quadraticCurveTo(0.92, 0.15, 1.20, 0.11);
+      ctx.strokeStyle = "rgba(10,30,60,0.45)";
+      ctx.lineWidth = 0.028;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-1.10, 0.185);
+      ctx.quadraticCurveTo(-0.15, 0.255, 0.42, 0.215);
+      ctx.quadraticCurveTo(0.92, 0.165, 1.20, 0.125);
+      ctx.strokeStyle = "rgba(230,245,255,0.45)";
+      ctx.lineWidth = 0.014;
       ctx.stroke();
 
-      // 車門分割線
+      // 三色飾條，底下襯一道淺色以免在藍車上消失
       ctx.beginPath();
-      ctx.moveTo(-0.18, -0.18);
-      ctx.lineTo(-0.14, 0.28);
-      ctx.strokeStyle = "rgba(8,32,30,0.55)";
+      ctx.moveTo(-0.98, 0.055);
+      ctx.quadraticCurveTo(0.10, 0.10, 0.58, 0.08);
+      ctx.lineTo(1.16, 0.04);
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 0.07;
+      ctx.stroke();
+      const stripeCols = ["#9ad0f5", "#0e2a58", "#e02a3c"];
+      function stripe(yOff, color, w) {
+        ctx.beginPath();
+        ctx.moveTo(-0.95, 0.07 + yOff);
+        ctx.quadraticCurveTo(0.10, 0.11 + yOff, 0.58, 0.09 + yOff);
+        ctx.lineTo(1.16, 0.05 + yOff);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = w || 0.015;
+        ctx.stroke();
+      }
+      stripe(0.016, stripeCols[0], 0.015);
+      stripe(-0.002, stripeCols[1], 0.016);
+      stripe(-0.020, stripeCols[2], 0.015);
+
+      // 短引擎蓋折線
+      ctx.beginPath();
+      ctx.moveTo(0.44, 0.22);
+      ctx.quadraticCurveTo(0.80, 0.16, 1.14, 0.12);
+      ctx.strokeStyle = "rgba(10,30,60,0.3)";
+      ctx.lineWidth = 0.016;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0.50, 0.24);
+      ctx.lineTo(1.02, 0.15);
+      ctx.strokeStyle = "rgba(220,240,255,0.3)";
+      ctx.lineWidth = 0.014;
+      ctx.stroke();
+
+      // 車門
+      ctx.beginPath();
+      ctx.moveTo(-0.10, -0.16);
+      ctx.lineTo(-0.06, 0.24);
+      ctx.strokeStyle = "rgba(8,24,48,0.4)";
+      ctx.lineWidth = 0.018;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.roundRect(0.04, 0.09, 0.11, 0.034, 0.012);
+      ctx.fillStyle = "#0e2a58";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.roundRect(0.055, 0.10, 0.08, 0.014, 0.006);
+      ctx.fillStyle = "#d8e4f0";
+      ctx.fill();
+
+      // 側裙
+      ctx.beginPath();
+      ctx.moveTo(-0.32, -0.20);
+      ctx.lineTo(0.38, -0.20);
+      ctx.lineTo(0.36, -0.135);
+      ctx.lineTo(-0.30, -0.135);
+      ctx.closePath();
+      ctx.fillStyle = "#12151c";
+      ctx.fill();
+
+      // 低寬前保桿：微笑曲線 + 單一橫縫（絕非雙腎）
+      ctx.beginPath();
+      ctx.moveTo(1.14, -0.20);
+      ctx.quadraticCurveTo(1.48, -0.15, 1.48, -0.02);
+      ctx.quadraticCurveTo(1.46, 0.09, 1.28, 0.11);
+      ctx.lineTo(1.18, 0.00);
+      ctx.quadraticCurveTo(1.20, -0.10, 1.14, -0.18);
+      ctx.closePath();
+      const bg = ctx.createLinearGradient(1.18, 0.12, 1.48, -0.20);
+      bg.addColorStop(0, "#6eb4ea");
+      bg.addColorStop(0.45, "#2f86d2");
+      bg.addColorStop(1, "#163a70");
+      ctx.fillStyle = bg;
+      ctx.fill();
+      ctx.strokeStyle = "#0e2a58";
+      ctx.lineWidth = 0.022;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.roundRect(1.32, -0.11, 0.13, 0.058, 0.022);
+      ctx.fillStyle = "#12151c";
+      ctx.fill();
+      ctx.strokeStyle = "#4a6080";
+      ctx.lineWidth = 0.01;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(1.20, -0.185);
+      ctx.quadraticCurveTo(1.40, -0.17, 1.46, -0.08);
+      ctx.strokeStyle = "rgba(8,20,40,0.45)";
       ctx.lineWidth = 0.022;
       ctx.stroke();
 
-      // 前保險桿與牛欄
-      polyPath([[1.18, -0.22], [1.40, -0.16], [1.40, 0.00], [1.28, 0.06], [1.20, -0.04]]);
-      ctx.fillStyle = "#c5beb2";
-      ctx.fill();
-      ctx.strokeStyle = "#6e685e";
-      ctx.lineWidth = 0.025;
-      ctx.stroke();
-      ctx.strokeStyle = "#ddd6ca";
-      ctx.lineWidth = 0.045;
+      function angelEye(cx, cy, r) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.88, 0, Math.PI * 2);
+        const lg = ctx.createRadialGradient(cx - r * 0.22, cy + r * 0.2, r * 0.08, cx, cy, r * 0.88);
+        lg.addColorStop(0, "#ffffff");
+        lg.addColorStop(0.4, "#e8f2ff");
+        lg.addColorStop(1, "#7a9cc8");
+        ctx.fillStyle = lg;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.98, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(230,245,255,0.98)";
+        ctx.lineWidth = r * 0.18;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx - r * 0.2, cy + r * 0.22, r * 0.2, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        ctx.fill();
+      }
+      // 深色燈座把雙圓燈收成一張臉，避免像黏上去的泡泡
       ctx.beginPath();
-      ctx.moveTo(1.30, -0.14);
-      ctx.lineTo(1.42, -0.10);
-      ctx.lineTo(1.42, 0.10);
-      ctx.lineTo(1.30, 0.12);
+      ctx.ellipse(1.24, 0.02, 0.15, 0.17, -0.35, 0, Math.PI * 2);
+      ctx.fillStyle = "#12151c";
+      ctx.fill();
+      ctx.strokeStyle = "#3a4658";
+      ctx.lineWidth = 0.016;
+      ctx.stroke();
+      angelEye(1.22, 0.085, 0.105);
+      angelEye(1.27, -0.04, 0.082);
+
+      drawYuanBadge(1.08, 0.08, 0.072);
+
+      // 後保桿
+      ctx.beginPath();
+      ctx.moveTo(-1.14, -0.18);
+      ctx.quadraticCurveTo(-1.38, -0.13, -1.38, 0.02);
+      ctx.quadraticCurveTo(-1.36, 0.16, -1.16, 0.18);
+      ctx.lineTo(-1.12, 0.02);
+      ctx.quadraticCurveTo(-1.14, -0.08, -1.12, -0.16);
+      ctx.closePath();
+      const rg = ctx.createLinearGradient(-1.14, 0.18, -1.38, -0.18);
+      rg.addColorStop(0, "#5aa0dc");
+      rg.addColorStop(1, "#163a70");
+      ctx.fillStyle = rg;
+      ctx.fill();
+      ctx.strokeStyle = "#0e2a58";
+      ctx.lineWidth = 0.022;
       ctx.stroke();
 
-      // 頭燈
+      function tail(cx, cy, r) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 1.1, 0, Math.PI * 2);
+        ctx.fillStyle = "#12151c";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.8, 0, Math.PI * 2);
+        const tg = ctx.createRadialGradient(cx - 0.01, cy + 0.02, 0.005, cx, cy, r * 0.8);
+        tg.addColorStop(0, "#ffc0b4");
+        tg.addColorStop(0.45, "#e4453c");
+        tg.addColorStop(1, "#7a1418");
+        ctx.fillStyle = tg;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.92, 0, Math.PI * 2);
+        ctx.strokeStyle = "#f4f1ea";
+        ctx.lineWidth = 0.012;
+        ctx.stroke();
+      }
+      tail(-1.24, 0.09, 0.06);
+      tail(-1.27, -0.02, 0.045);
+
       ctx.beginPath();
-      ctx.arc(1.22, 0.07, 0.09, 0, Math.PI * 2);
-      const lg = ctx.createRadialGradient(1.20, 0.09, 0.01, 1.22, 0.07, 0.09);
-      lg.addColorStop(0, "#fff6d0");
-      lg.addColorStop(0.55, "#ffe08a");
-      lg.addColorStop(1, "#c9a24a");
-      ctx.fillStyle = lg;
+      ctx.roundRect(-1.40, -0.16, 0.18, 0.07, 0.03);
+      ctx.fillStyle = "#2a2c30";
       ctx.fill();
-      ctx.strokeStyle = "#6a5a30";
-      ctx.lineWidth = 0.02;
+      ctx.strokeStyle = "#12151c";
+      ctx.lineWidth = 0.014;
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(1.195, 0.095, 0.028, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.arc(-1.40, -0.125, 0.028, 0, Math.PI * 2);
+      ctx.fillStyle = "#0e1014";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-1.40, -0.125, 0.016, 0, Math.PI * 2);
+      ctx.fillStyle = "#3a3c40";
       ctx.fill();
 
-      // 後保險桿與尾燈
-      polyPath([[-1.30, -0.16], [-1.16, -0.22], [-1.14, 0.06], [-1.30, 0.10]]);
-      ctx.fillStyle = "#c5beb2";
-      ctx.fill();
-      ctx.strokeStyle = "#6e685e";
-      ctx.lineWidth = 0.025;
-      ctx.stroke();
+      // 車窗：大玻璃 + 後緣前勾
       ctx.beginPath();
-      ctx.roundRect(-1.30, 0.00, 0.12, 0.10, 0.03);
-      ctx.fillStyle = "#d4453a";
-      ctx.fill();
-      ctx.fillStyle = "rgba(255,200,180,0.45)";
-      ctx.beginPath();
-      ctx.arc(-1.22, 0.08, 0.025, 0, Math.PI * 2);
-      ctx.fill();
-
-      // 排氣管
-      ctx.beginPath();
-      ctx.roundRect(-1.34, -0.16, 0.16, 0.07, 0.03);
-      ctx.fillStyle = "#4a4642";
-      ctx.fill();
-      ctx.strokeStyle = "#2a2826";
-      ctx.lineWidth = 0.015;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(-1.34, -0.125, 0.03, 0, Math.PI * 2);
-      ctx.fillStyle = "#1a1918";
-      ctx.fill();
-
-      // 車窗
-      const win = [[-0.96, 0.30], [-0.14, 0.30], [-0.08, 0.66], [-0.98, 0.66]];
-      polyPath(win);
-      const wg = ctx.createLinearGradient(-0.5, 0.30, -0.5, 0.68);
-      wg.addColorStop(0, "rgba(70, 110, 125, 0.88)");
-      wg.addColorStop(1, "rgba(160, 205, 215, 0.72)");
+      ctx.moveTo(0.30, 0.28);
+      ctx.lineTo(0.16, 0.64);
+      ctx.quadraticCurveTo(-0.38, 0.75, -0.92, 0.64);
+      ctx.lineTo(-0.97, 0.44);
+      ctx.lineTo(-1.10, 0.36);
+      ctx.lineTo(-1.08, 0.28);
+      ctx.lineTo(-0.90, 0.26);
+      ctx.closePath();
+      const wg = ctx.createLinearGradient(-0.3, 0.24, -0.3, 0.74);
+      wg.addColorStop(0, "rgba(24, 48, 70, 0.94)");
+      wg.addColorStop(0.55, "rgba(70, 120, 150, 0.80)");
+      wg.addColorStop(1, "rgba(190, 225, 235, 0.72)");
       ctx.fillStyle = wg;
       ctx.fill();
-      ctx.strokeStyle = "#0a2c29";
-      ctx.lineWidth = 0.04;
+      ctx.strokeStyle = "#12151c";
+      ctx.lineWidth = 0.05;
       ctx.stroke();
+      // 窗框亮邊，強調後勾
       ctx.beginPath();
-      ctx.moveTo(-0.88, 0.60);
-      ctx.lineTo(-0.30, 0.60);
-      ctx.strokeStyle = "rgba(255,255,255,0.35)";
-      ctx.lineWidth = 0.025;
+      ctx.moveTo(0.24, 0.32);
+      ctx.lineTo(0.12, 0.60);
+      ctx.quadraticCurveTo(-0.38, 0.70, -0.88, 0.60);
+      ctx.lineTo(-0.93, 0.44);
+      ctx.lineTo(-1.04, 0.36);
+      ctx.lineTo(-1.02, 0.31);
+      ctx.lineTo(-0.88, 0.30);
+      ctx.strokeStyle = "rgba(220,235,245,0.45)";
+      ctx.lineWidth = 0.016;
       ctx.stroke();
 
-      // 駕駛頭盔
+      // 駕駛：大眼、淺笑、簡潔頭髮
       ctx.beginPath();
-      ctx.arc(-0.54, 0.42, 0.135, 0, Math.PI * 2);
-      const hg = ctx.createRadialGradient(-0.58, 0.47, 0.02, -0.54, 0.42, 0.14);
-      hg.addColorStop(0, "#f3c56a");
-      hg.addColorStop(1, "#c47a2a");
+      ctx.arc(-0.46, 0.40, 0.135, 0, Math.PI * 2);
+      const hg = ctx.createRadialGradient(-0.52, 0.46, 0.02, -0.46, 0.40, 0.135);
+      hg.addColorStop(0, "#ffe4c0");
+      hg.addColorStop(1, "#e09a6a");
       ctx.fillStyle = hg;
       ctx.fill();
-      ctx.strokeStyle = "#7a4a18";
-      ctx.lineWidth = 0.02;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(-0.46, 0.40, 0.137, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.fillStyle = "#3a241c";
+      ctx.fillRect(-0.62, 0.43, 0.34, 0.16);
+      ctx.beginPath();
+      ctx.moveTo(-0.58, 0.50);
+      ctx.quadraticCurveTo(-0.52, 0.40, -0.46, 0.48);
+      ctx.quadraticCurveTo(-0.40, 0.40, -0.34, 0.50);
+      ctx.fill();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(-0.46, 0.40, 0.135, 0, Math.PI * 2);
+      ctx.strokeStyle = "#b07848";
+      ctx.lineWidth = 0.014;
       ctx.stroke();
-      polyPath([[-0.66, 0.42], [-0.42, 0.42], [-0.40, 0.34], [-0.68, 0.34]]);
-      ctx.fillStyle = "#24333a";
+      ctx.beginPath();
+      ctx.ellipse(-0.52, 0.395, 0.024, 0.028, 0, 0, Math.PI * 2);
+      ctx.ellipse(-0.39, 0.395, 0.024, 0.028, 0, 0, Math.PI * 2);
+      ctx.fillStyle = "#2a241c";
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(-0.64, 0.40);
-      ctx.lineTo(-0.44, 0.40);
-      ctx.strokeStyle = "rgba(180,220,230,0.4)";
-      ctx.lineWidth = 0.015;
-      ctx.stroke();
-
-      // 防滾籠（留在車體上，車頂掉落後仍看得到）
-      ctx.strokeStyle = "#d9d2c6";
-      ctx.lineWidth = 0.055;
+      ctx.arc(-0.512, 0.405, 0.008, 0, Math.PI * 2);
+      ctx.arc(-0.382, 0.405, 0.008, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(-1.00, 0.18);
-      ctx.lineTo(-1.00, 0.72);
-      ctx.lineTo(-0.06, 0.72);
-      ctx.lineTo(-0.06, 0.20);
-      ctx.stroke();
+      ctx.arc(-0.57, 0.35, 0.02, 0, Math.PI * 2);
+      ctx.arc(-0.35, 0.35, 0.02, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(240,120,110,0.4)";
+      ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(-1.00, 0.72);
-      ctx.lineTo(-0.92, 0.86);
-      ctx.lineTo(-0.14, 0.86);
-      ctx.lineTo(-0.06, 0.72);
+      ctx.arc(-0.455, 0.325, 0.032, Math.PI * 1.12, Math.PI * 1.88);
+      ctx.strokeStyle = "#8a4a38";
+      ctx.lineWidth = 0.013;
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(-0.54, 0.72);
-      ctx.lineTo(-0.54, 0.86);
-      ctx.stroke();
-      ctx.strokeStyle = "#8a8478";
-      ctx.lineWidth = 0.018;
-      ctx.beginPath();
-      ctx.moveTo(-1.00, 0.18);
-      ctx.lineTo(-1.00, 0.72);
-      ctx.lineTo(-0.06, 0.72);
-      ctx.lineTo(-0.06, 0.20);
-      ctx.stroke();
+      ctx.moveTo(-0.58, 0.28);
+      ctx.quadraticCurveTo(-0.46, 0.22, -0.34, 0.28);
+      ctx.lineTo(-0.32, 0.24);
+      ctx.quadraticCurveTo(-0.46, 0.16, -0.60, 0.24);
+      ctx.closePath();
+      ctx.fillStyle = "#0e2a58";
+      ctx.fill();
 
       // 後視鏡
       ctx.beginPath();
-      ctx.roundRect(-0.08, 0.24, 0.12, 0.07, 0.02);
-      ctx.fillStyle = "#d8d2c6";
+      ctx.roundRect(0.16, 0.25, 0.13, 0.07, 0.02);
+      ctx.fillStyle = "#12151c";
       ctx.fill();
-      ctx.fillStyle = "#6a8a96";
       ctx.beginPath();
-      ctx.roundRect(-0.06, 0.255, 0.08, 0.04, 0.01);
+      ctx.roundRect(0.185, 0.265, 0.09, 0.04, 0.012);
+      ctx.fillStyle = "#8ab0c4";
       ctx.fill();
     });
   }
@@ -1471,24 +1670,28 @@
   function drawRoofPanel() {
     if (!car || !car.roof) return;
     inBody(car.roof, function () {
+      // 貼合車艙的薄頂蓋，不要看起來像一頂帽子
       ctx.beginPath();
-      ctx.roundRect(-0.50, -0.10, 1.00, 0.22, 0.08);
-      const g = ctx.createLinearGradient(0, -0.10, 0, 0.12);
-      g.addColorStop(0, "#fffaf2");
-      g.addColorStop(0.5, "#efe8db");
-      g.addColorStop(1, "#cfc4b0");
+      ctx.moveTo(-0.58, -0.10);
+      ctx.quadraticCurveTo(-0.46, 0.07, 0.00, 0.09);
+      ctx.quadraticCurveTo(0.46, 0.07, 0.58, -0.10);
+      ctx.quadraticCurveTo(0.20, -0.13, 0.00, -0.13);
+      ctx.quadraticCurveTo(-0.20, -0.13, -0.58, -0.10);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, -0.13, 0, 0.09);
+      g.addColorStop(0, "#c8c4bc");
+      g.addColorStop(0.4, "#f4f1ea");
+      g.addColorStop(1, "#ffffff");
       ctx.fillStyle = g;
       ctx.fill();
-      ctx.strokeStyle = "#8a8174";
-      ctx.lineWidth = 0.03;
+      ctx.strokeStyle = "#12151c";
+      ctx.lineWidth = 0.024;
       ctx.stroke();
-      ctx.strokeStyle = "#b9b0a2";
-      ctx.lineWidth = 0.022;
       ctx.beginPath();
-      ctx.moveTo(-0.42, 0.06);
-      ctx.lineTo(0.42, 0.06);
-      ctx.moveTo(-0.42, -0.02);
-      ctx.lineTo(0.42, -0.02);
+      ctx.moveTo(-0.32, -0.02);
+      ctx.quadraticCurveTo(0.00, 0.05, 0.32, -0.02);
+      ctx.strokeStyle = "rgba(255,255,255,0.75)";
+      ctx.lineWidth = 0.018;
       ctx.stroke();
     });
   }
