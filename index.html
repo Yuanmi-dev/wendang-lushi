@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="#e8c9a0">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<title>穩當路試</title>
+<style>
+  html,body{
+    margin:0;width:100%;height:100%;height:100dvh;background:#e8c9a0;overflow:hidden;
+    font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;
+    touch-action:none;user-select:none;-webkit-user-select:none;
+    -webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;
+    overscroll-behavior:none;position:fixed;inset:0;color:#2b241c;
+  }
+  #wrap{position:fixed;inset:0;width:100%;height:100%;height:100dvh;background:#e8c9a0;}
+  canvas{display:block;width:100%;height:100%;touch-action:none;background:#e8c9a0;}
+  button{font-family:inherit;touch-action:manipulation;-webkit-user-select:none;user-select:none;}
+  #hud{
+    position:fixed;left:0;right:0;top:0;z-index:5;pointer-events:none;
+    padding:calc(8px + env(safe-area-inset-top,0px)) 12px 0;
+    display:flex;align-items:flex-start;justify-content:space-between;gap:8px;
+  }
+  #hud .meta{background:rgba(251,246,238,.92);border-radius:14px;padding:6px 12px;
+    box-shadow:0 1px 4px rgba(0,0,0,.12);max-width:70%;}
+  #hud .title{font-weight:700;font-size:15px;line-height:1.2;}
+  #hud .sub{font-size:12px;color:#5a4e40;margin-top:2px;}
+  #btnPause{
+    pointer-events:auto;border:0;border-radius:16px;padding:8px 12px;font-size:14px;
+    background:rgba(251,246,238,.94);color:#2b241c;box-shadow:0 1px 4px rgba(0,0,0,.12);
+  }
+  #controls{
+    position:fixed;left:0;right:0;bottom:0;z-index:6;
+    display:none;gap:12px;justify-content:space-between;align-items:stretch;
+    padding:0 calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px));
+  }
+  #controls.on{display:flex;}
+  .pedal{
+    flex:1;min-height:88px;max-width:46%;border:0;border-radius:22px;font-size:22px;font-weight:700;
+    letter-spacing:.08em;color:#fff;box-shadow:0 3px 0 rgba(0,0,0,.18);opacity:.92;
+  }
+  #btnBrake{background:#a3452f;}
+  #btnGas{background:#1f7a6f;}
+  .pedal:active,.pedal.held{transform:translateY(2px);box-shadow:0 1px 0 rgba(0,0,0,.18);opacity:1;}
+  #hintBar{
+    position:fixed;left:50%;transform:translateX(-50%);z-index:5;display:none;
+    bottom:calc(112px + env(safe-area-inset-bottom,0px));
+    background:rgba(43,36,28,.82);color:#fbf6ee;border-radius:14px;
+    padding:6px 12px;font-size:13px;max-width:80%;text-align:center;pointer-events:none;
+  }
+  #hintBar.on{display:block;}
+  .sheet{
+    position:fixed;inset:0;z-index:10;display:none;align-items:center;justify-content:center;
+    padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));
+    background:rgba(43,36,28,.35);
+  }
+  .sheet.on{display:flex;}
+  .card{
+    background:#fbf6ee;border-radius:22px;padding:22px 20px 18px;width:min(420px,100%);
+    box-shadow:0 8px 28px rgba(0,0,0,.2);max-height:100%;overflow:auto;
+  }
+  .card h1{margin:0 0 4px;font-size:28px;letter-spacing:.04em;}
+  .card .tag{font-size:13px;color:#5a4e40;margin-bottom:14px;}
+  .card p{margin:0 0 12px;font-size:15px;line-height:1.55;}
+  .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+  .row button, .levels button{
+    border:0;border-radius:14px;padding:10px 14px;font-size:15px;background:#1f7a6f;color:#fff;
+  }
+  .row button.ghost, .levels button.locked{
+    background:#e7dfd2;color:#2b241c;
+  }
+  .levels{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;}
+  .levels button{text-align:left;background:#fff;color:#2b241c;box-shadow:0 1px 3px rgba(0,0,0,.08);
+    padding:10px 12px;min-height:58px;}
+  .levels button .n{font-weight:700;font-size:14px;}
+  .levels button .s{font-size:12px;color:#5a4e40;margin-top:2px;}
+  .stars{letter-spacing:1px;color:#c48a14;}
+  #adContinueBtn{
+    display:none;width:100%;margin-top:8px;border:0;border-radius:14px;padding:12px 14px;
+    font-size:15px;font-weight:700;background:#2b241c;color:#fff;
+  }
+  #adContinueBtn.visible{display:block;}
+  #adFake{
+    display:none;position:fixed;inset:0;z-index:30;background:rgba(20,16,12,.94);color:#fbf6ee;
+    flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;
+  }
+  #adFake.visible{display:flex;}
+  #adFake button{border:0;border-radius:16px;padding:10px 16px;font-size:15px;background:#fff;color:#2b241c;}
+  #adFake button.secondary{background:rgba(255,255,255,.16);color:#fff;}
+  #count{position:fixed;inset:0;z-index:7;display:none;align-items:center;justify-content:center;
+    font-size:84px;font-weight:800;color:#2b241c;text-shadow:0 2px 0 rgba(255,255,255,.6);pointer-events:none;}
+  #count.on{display:flex;}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="800" height="450"></canvas></div>
+<div id="hud" hidden>
+  <div class="meta">
+    <div class="title" id="hudTitle">穩當路試</div>
+    <div class="sub" id="hudSub"></div>
+  </div>
+  <button type="button" id="btnPause">暫停</button>
+</div>
+<div id="hintBar"></div>
+<div id="count">3</div>
+<div id="controls">
+  <button type="button" class="pedal" id="btnBrake">煞車</button>
+  <button type="button" class="pedal" id="btnGas">油門</button>
+</div>
+
+<div class="sheet on" id="sheetMenu">
+  <div class="card">
+    <h1>穩當路試</h1>
+    <div class="tag">每週小遊戲　第 1 週　油門與煞車的平衡課</div>
+    <p>這是一輛還沒完全鎖緊的試作車。油門與煞車要細踩，衝太猛會翻車，撞擊過大時零件或貨物會掉下來。把車穩穩開到旗門即可。</p>
+    <p style="font-size:13px;color:#5a4e40;">觸控用左右兩顆按鈕；電腦可用方向鍵或 A／D、空白鍵煞車。停穩後再按煞車會後退。</p>
+    <div class="levels" id="levelList"></div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetPause">
+  <div class="card">
+    <h1>暫停</h1>
+    <p id="pauseHint"></p>
+    <div class="row">
+      <button type="button" id="btnResume">繼續</button>
+      <button type="button" class="ghost" id="btnRetryPause">重來</button>
+      <button type="button" class="ghost" id="btnMenuPause">關卡列表</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetResult">
+  <div class="card">
+    <h1 id="resultTitle">到達</h1>
+    <p id="resultBody"></p>
+    <div class="row">
+      <button type="button" id="btnNext">下一關</button>
+      <button type="button" class="ghost" id="btnRetry">再試一次</button>
+      <button type="button" class="ghost" id="btnMenu">關卡列表</button>
+    </div>
+    <button type="button" id="adContinueBtn">看廣告再試一次（保留這次機會）</button>
+  </div>
+</div>
+
+<div id="adFake" aria-live="polite">
+  <div id="adFakeTitle" style="font-size:22px;font-weight:700;">測試廣告</div>
+  <div id="adFakeNote" style="font-size:14px;max-width:320px;color:#e7dfd2;">這是本機模擬，沒有向 Google 發送請求。</div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+    <button type="button" id="adFakeView">看完</button>
+    <button type="button" id="adFakeSkip" class="secondary">略過</button>
+    <button type="button" id="adFakeClose">關閉</button>
+  </div>
+</div>
+
+<script src="vendor/planck.min.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
