@@ -10,12 +10,13 @@
     POS_IT: 3,
     GRAVITY: 9.81,
     // 車
-    WHEEL_R: 0.38,
-    MOTOR_SPEED: 38,       // rad/s；半徑 0.38 → 理論約 16 m/s
-    TORQUE_REAR: 16,
-    TORQUE_FRONT: 14,
-    BRAKE_TORQUE: 28,
-    COAST_TORQUE: 2.2,     // 無輸入時的引擎煞車／滾動阻力；陡坡仍可緩緩下滑
+    WHEEL_R: 0.28,
+    WHEEL_Y: -0.30,        // 輪心相對底盤，讓車身蓋住大部分輪胎
+    MOTOR_SPEED: 52,       // rad/s；與舊 38×0.38 維持相近線速度
+    TORQUE_REAR: 11.8,     // 力矩隨半徑縮小，維持相近驅動力
+    TORQUE_FRONT: 10.3,
+    BRAKE_TORQUE: 20.6,
+    COAST_TORQUE: 1.6,     // 無輸入時的引擎煞車／滾動阻力；陡坡仍可緩緩下滑
     STOP_VX: 0.28,         // 視為停穩的水平速度
     REVERSE_HOLD_S: 0.6,   // 停穩後持續按住煞車，超過此時長才進入倒車
     SPRING_HZ: 4.2,
@@ -35,6 +36,10 @@
     ADS_INTERSTITIAL_EVERY: 3,
     ADS_FAKE_MS: 1400
   };
+
+  function spawnLift() {
+    return -CFG.WHEEL_Y + CFG.WHEEL_R + 0.12;
+  }
 
   const URL_PARAMS = new URLSearchParams((location.search || "").replace(/^\?/, ""));
   const DEBUG = URL_PARAMS.get("debug") === "1";
@@ -230,7 +235,7 @@
     let x = 0, y = 0;
     const pts = [];
     const props = [];
-    let spawn = { x: 2.2, y: 0.95 };
+    let spawn = { x: 2.2, y: spawnLift() };
     let goal = { x: 20, y: 0, w: 3.2, h: 3.2 };
     let killY = CFG.KILL_Y;
     const groundBody = world.createBody({ type: "static" });
@@ -251,11 +256,11 @@
     const api = {
       get x() { return x; },
       get y() { return y; },
-      spawnAt(sx, sy) { spawn = { x: sx, y: sy == null ? y + 0.92 : sy }; return api; },
+      spawnAt(sx, sy) { spawn = { x: sx, y: sy == null ? y + spawnLift() : sy }; return api; },
       pad(len) {
         const s = x;
         push(x + (len == null ? 10 : len), y);
-        spawn = { x: s + 2.2, y: y + 0.92 };
+        spawn = { x: s + 2.2, y: y + spawnLift() };
         return api;
       },
       flat(len) { push(x + len, y); return api; },
@@ -287,7 +292,8 @@
       seesaw(len, thick) {
         flush();
         const L = len || 7, tck = thick || 0.2;
-        const cx = x + L * 0.5, cy = y + tck;
+        // 板心貼齊路面，前端落差約一個板厚，讓低底盤也能開上去
+        const cx = x + L * 0.5, cy = y;
         const board = world.createBody({ type: "dynamic", position: { x: cx, y: cy } });
         const fx = board.createFixture({ shape: new pl.Box(L * 0.5, tck), density: 0.9, friction: 0.85, filterCategoryBits: CAT.PROP, filterMaskBits: 0xffff });
         fx.setUserData({ kind: "seesaw" });
@@ -545,7 +551,7 @@
     const roofJ = world.createJoint(new pl.WeldJoint({ frequencyHz: 8, dampingRatio: 0.5 }, chassis, roof, roof.getPosition()));
 
     function makeWheel(wx, motorTorque) {
-      const wheel = world.createBody({ type: "dynamic", position: { x: wx, y: y - 0.42 } });
+      const wheel = world.createBody({ type: "dynamic", position: { x: wx, y: y + CFG.WHEEL_Y } });
       const fx = wheel.createFixture({
         shape: new pl.Circle(CFG.WHEEL_R),
         density: 0.9, friction: 1.05, restitution: 0.05, filter: filterCar()
@@ -1133,173 +1139,121 @@
   function drawBuggyWheel(wheelBody) {
     inBody(wheelBody, function () {
       const R = CFG.WHEEL_R;
-      const Rt = R * 1.12;
+      // 視覺幾乎等於物理半徑，光滑胎壁，沒有越野胎塊
       ctx.beginPath();
-      ctx.arc(0, 0, Rt, 0, Math.PI * 2);
-      ctx.fillStyle = "#141416";
+      ctx.arc(0, 0, R, 0, Math.PI * 2);
+      ctx.fillStyle = "#1a1a1d";
       ctx.fill();
-      const n = 18;
-      for (let i = 0; i < n; i++) {
-        const a0 = (i / n) * Math.PI * 2;
-        const a1 = a0 + Math.PI * 2 / n * 0.45;
-        ctx.beginPath();
-        ctx.arc(0, 0, Rt * 1.02, a0, a1);
-        ctx.arc(0, 0, Rt * 0.88, a1, a0, true);
-        ctx.closePath();
-        ctx.fillStyle = i % 2 ? "#2a2a2e" : "#1a1a1d";
-        ctx.fill();
-      }
       ctx.beginPath();
-      ctx.arc(0, 0, R * 0.86, 0, Math.PI * 2);
-      ctx.fillStyle = "#3a3a40";
+      ctx.arc(0, 0, R * 0.97, 0, Math.PI * 2);
+      ctx.strokeStyle = "#2c2c32";
+      ctx.lineWidth = 0.018;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.82, 0, Math.PI * 2);
+      ctx.fillStyle = "#2a2a30";
       ctx.fill();
       ctx.beginPath();
       ctx.arc(0, 0, R * 0.78, 0, Math.PI * 2);
-      ctx.fillStyle = "#1c1c20";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.74, 0, Math.PI * 2);
       const lip = ctx.createLinearGradient(-R, 0, R, 0);
-      lip.addColorStop(0, "#8a8a92");
-      lip.addColorStop(0.45, "#ececef");
-      lip.addColorStop(1, "#6a6a72");
+      lip.addColorStop(0, "#7a7e86");
+      lip.addColorStop(0.45, "#d8dce2");
+      lip.addColorStop(1, "#6a6e76");
       ctx.fillStyle = lip;
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(0, 0, R * 0.68, 0, Math.PI * 2);
-      const dish = ctx.createRadialGradient(-0.05, 0.05, 0.02, 0, 0, R * 0.68);
-      dish.addColorStop(0, "#8a9098");
-      dish.addColorStop(1, "#3a3e46");
+      ctx.arc(0, 0, R * 0.70, 0, Math.PI * 2);
+      const dish = ctx.createRadialGradient(-0.04, 0.04, 0.01, 0, 0, R * 0.70);
+      dish.addColorStop(0, "#9aa2aa");
+      dish.addColorStop(1, "#5a616a");
       ctx.fillStyle = dish;
       ctx.fill();
       const spokes = 5;
       for (let i = 0; i < spokes; i++) {
-        const a = i * Math.PI * 2 / spokes - 0.15;
+        const a = i * Math.PI * 2 / spokes - 0.12;
         ctx.save();
         ctx.rotate(a);
         ctx.beginPath();
-        ctx.moveTo(0.045, -0.038);
-        ctx.lineTo(R * 0.62, -0.024);
-        ctx.lineTo(R * 0.64, 0);
-        ctx.lineTo(R * 0.62, 0.024);
-        ctx.lineTo(0.045, 0.038);
+        ctx.moveTo(0.035, -0.032);
+        ctx.lineTo(R * 0.62, -0.022);
+        ctx.lineTo(R * 0.65, 0);
+        ctx.lineTo(R * 0.62, 0.022);
+        ctx.lineTo(0.035, 0.032);
         ctx.closePath();
-        const sg = ctx.createLinearGradient(0.05, 0, R * 0.64, 0);
+        const sg = ctx.createLinearGradient(0.04, 0, R * 0.65, 0);
         sg.addColorStop(0, "#d8dce2");
-        sg.addColorStop(0.45, "#9aa2aa");
+        sg.addColorStop(0.5, "#9aa2aa");
         sg.addColorStop(1, "#eceef2");
         ctx.fillStyle = sg;
         ctx.fill();
         ctx.restore();
       }
-      // 純圓心蓋，無文字、無廠徽
       ctx.beginPath();
-      ctx.arc(0, 0, 0.10, 0, Math.PI * 2);
-      ctx.fillStyle = "#c8ccd2";
+      ctx.arc(0, 0, 0.072, 0, Math.PI * 2);
+      ctx.fillStyle = "#c4c8ce";
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(0, 0, 0.062, 0, Math.PI * 2);
-      ctx.fillStyle = "#3a4048";
+      ctx.arc(0, 0, 0.038, 0, Math.PI * 2);
+      ctx.fillStyle = "#5a6068";
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(0, 0, 0.028, 0, Math.PI * 2);
-      ctx.fillStyle = "#a8aeb6";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.99, 0.7, 1.5);
-      ctx.strokeStyle = "rgba(255,255,255,0.22)";
-      ctx.lineWidth = 0.03;
+      ctx.arc(0, 0, R * 0.96, 0.75, 1.45);
+      ctx.strokeStyle = "rgba(255,255,255,0.18)";
+      ctx.lineWidth = 0.02;
       ctx.stroke();
     });
   }
 
   function drawSuspension() {
-    if (!car) return;
-    inBody(car.chassis, function () {
-      [["rear", -0.82], ["front", 0.88]].forEach(function (pair) {
-        const w = pair[0] === "rear" ? car.rear : car.front;
-        if (!w || !w.body) return;
-        const wp = car.chassis.getLocalPoint(w.body.getPosition());
-        const ax = pair[1];
-        const inboard = ax + (pair[0] === "rear" ? 0.22 : -0.22);
-        ctx.strokeStyle = "#3a3d44";
-        ctx.lineWidth = 0.055;
-        ctx.beginPath();
-        ctx.moveTo(inboard, -0.12);
-        ctx.lineTo(wp.x, wp.y);
-        ctx.stroke();
-        ctx.strokeStyle = "#b0b4bc";
-        ctx.lineWidth = 0.022;
-        ctx.beginPath();
-        ctx.moveTo(inboard, -0.12);
-        ctx.lineTo(wp.x, wp.y);
-        ctx.stroke();
-        const x0 = ax, y0 = 0.12, x1 = wp.x, y1 = wp.y + 0.06;
-        const dx = x1 - x0, dy = y1 - y0;
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = -dy / len, ny = dx / len;
-        ctx.beginPath();
-        ctx.moveTo(x0, y0);
-        const coils = 7;
-        for (let i = 1; i < coils * 2; i++) {
-          const t = i / (coils * 2);
-          const off = (i % 2 ? 1 : -1) * 0.048;
-          ctx.lineTo(x0 + dx * t + nx * off, y0 + dy * t + ny * off);
-        }
-        ctx.lineTo(x1, y1);
-        ctx.strokeStyle = "#c8ccd4";
-        ctx.lineWidth = 0.036;
-        ctx.stroke();
-        ctx.fillStyle = "#4a4e56";
-        ctx.beginPath(); ctx.arc(x0, y0, 0.032, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(wp.x, wp.y, 0.042, 0, Math.PI * 2); ctx.fill();
-      });
-    });
+    // 物理懸吊仍在；外觀比照概念圖，不畫出彈簧
   }
 
   function drawHull() {
     inBody(car.chassis, function () {
+      const wr = CFG.WHEEL_R;
+      const wY = CFG.WHEEL_Y;
+      const aR = wr + 0.045;
       function archOver(cx, cy, rx, ry, a0, a1) {
-        for (let i = 0; i <= 14; i++) {
-          const ang = a0 + (a1 - a0) * (i / 14);
+        for (let i = 0; i <= 16; i++) {
+          const ang = a0 + (a1 - a0) * (i / 16);
           ctx.lineTo(cx + Math.cos(ang) * rx, cy + Math.sin(ang) * ry);
         }
       }
-      // 長車頭、短車尾、斜背、外擴輪拱的雙門轎跑輪廓（Q 版，對齊 concept-03）
       function bodyPath() {
         ctx.beginPath();
-        ctx.moveTo(-1.16, -0.18);
-        ctx.quadraticCurveTo(-1.36, -0.12, -1.34, 0.02);
-        ctx.quadraticCurveTo(-1.32, 0.22, -1.22, 0.32);
-        // 短後甲板與小鴨尾
-        ctx.quadraticCurveTo(-1.30, 0.40, -1.20, 0.46);
-        ctx.lineTo(-1.08, 0.48);
-        // 斜背：由後甲板往車頂峰緩和爬升
-        ctx.quadraticCurveTo(-0.95, 0.62, -0.62, 0.78);
-        ctx.quadraticCurveTo(-0.45, 0.86, -0.18, 0.82);
-        ctx.quadraticCurveTo(-0.02, 0.74, 0.04, 0.68);
-        // 前傾風擋，讓引擎蓋變長
-        ctx.quadraticCurveTo(0.18, 0.48, 0.26, 0.22);
-        ctx.quadraticCurveTo(0.90, 0.16, 1.22, 0.11);
-        ctx.quadraticCurveTo(1.38, 0.09, 1.42, 0.00);
-        ctx.quadraticCurveTo(1.48, -0.08, 1.32, -0.20);
-        archOver(0.88, -0.42, 0.49, 0.55, 0.34, Math.PI - 0.34);
-        ctx.lineTo(-0.30, -0.20);
-        archOver(-0.82, -0.42, 0.50, 0.56, 0.34, Math.PI - 0.34);
+        ctx.moveTo(-1.16, -0.30);
+        ctx.quadraticCurveTo(-1.36, -0.26, -1.34, -0.06);
+        ctx.quadraticCurveTo(-1.32, 0.16, -1.20, 0.28);
+        ctx.quadraticCurveTo(-1.28, 0.40, -1.14, 0.46);
+        ctx.lineTo(-1.02, 0.48);
+        ctx.quadraticCurveTo(-0.88, 0.62, -0.52, 0.78);
+        ctx.quadraticCurveTo(-0.32, 0.86, -0.08, 0.80);
+        ctx.quadraticCurveTo(0.10, 0.66, 0.18, 0.56);
+        ctx.quadraticCurveTo(0.30, 0.32, 0.36, 0.16);
+        ctx.quadraticCurveTo(0.95, 0.10, 1.24, 0.06);
+        ctx.quadraticCurveTo(1.42, 0.04, 1.46, -0.06);
+        ctx.quadraticCurveTo(1.50, -0.16, 1.40, -0.30);
+        ctx.quadraticCurveTo(1.24, -0.34, 1.12, -0.32);
+        const skirtY = -0.32;
+        const sEdge = Math.max(-0.95, Math.min(0.95, (skirtY - wY) / aR));
+        const aEdge = Math.asin(sEdge);
+        archOver(0.88, wY, aR, aR, aEdge, Math.PI - aEdge);
+        ctx.lineTo(-0.30, skirtY);
+        archOver(-0.82, wY, aR, aR, aEdge, Math.PI - aEdge);
         ctx.closePath();
       }
 
       ctx.beginPath();
-      ctx.moveTo(-1.16, -0.22);
-      ctx.lineTo(1.28, -0.22);
-      ctx.lineTo(1.32, -0.14);
-      ctx.lineTo(-1.20, -0.14);
+      ctx.moveTo(-0.30, -0.32);
+      ctx.lineTo(0.36, -0.32);
+      ctx.lineTo(0.36, -0.24);
+      ctx.lineTo(-0.30, -0.24);
       ctx.closePath();
       ctx.fillStyle = "#1a1e26";
       ctx.fill();
 
       bodyPath();
-      const g = ctx.createLinearGradient(0, -0.24, 0, 0.84);
+      const g = ctx.createLinearGradient(0, -0.32, 0, 0.84);
       g.addColorStop(0, "#145a96");
       g.addColorStop(0.22, "#1a78c4");
       g.addColorStop(0.52, "#2a92dc");
@@ -1308,157 +1262,137 @@
       ctx.fillStyle = g;
       ctx.fill();
       ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.030;
+      ctx.lineWidth = 0.028;
       ctx.stroke();
 
       ctx.save();
       bodyPath();
       ctx.clip();
       ctx.beginPath();
-      ctx.moveTo(-1.2, 0.22);
-      ctx.quadraticCurveTo(0.2, 0.32, 1.3, 0.12);
-      ctx.strokeStyle = "rgba(220,240,255,0.5)";
-      ctx.lineWidth = 0.05;
+      ctx.moveTo(-1.2, 0.20);
+      ctx.quadraticCurveTo(0.2, 0.30, 1.3, 0.10);
+      ctx.strokeStyle = "rgba(220,240,255,0.45)";
+      ctx.lineWidth = 0.045;
       ctx.stroke();
-      const shade = ctx.createLinearGradient(0, -0.22, 0, 0.12);
-      shade.addColorStop(0, "rgba(8,30,60,0.32)");
+      const shade = ctx.createLinearGradient(0, -0.32, 0, 0.00);
+      shade.addColorStop(0, "rgba(8,30,60,0.28)");
       shade.addColorStop(1, "rgba(8,30,60,0)");
       ctx.fillStyle = shade;
-      ctx.fillRect(-1.5, -0.24, 3.2, 0.36);
+      ctx.fillRect(-1.5, -0.34, 3.2, 0.34);
       ctx.restore();
 
-      function fenderLip(cx, rx, ry) {
+      function fenderLip(cx) {
         ctx.beginPath();
-        for (let i = 0; i <= 14; i++) {
-          const ang = 0.30 + (Math.PI - 0.60) * (i / 14);
-          const x = cx + Math.cos(ang) * rx, y = -0.42 + Math.sin(ang) * ry;
+        const rLip = aR + 0.02;
+        const sL = Math.max(-0.95, Math.min(0.95, ((-0.32) - wY) / rLip));
+        const a0 = Math.asin(sL), a1 = Math.PI - a0;
+        for (let i = 0; i <= 16; i++) {
+          const ang = a0 + (a1 - a0) * (i / 16);
+          const x = cx + Math.cos(ang) * rLip, y = wY + Math.sin(ang) * rLip;
           if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         }
         ctx.strokeStyle = "#1568aa";
-        ctx.lineWidth = 0.10;
+        ctx.lineWidth = 0.07;
         ctx.stroke();
-        ctx.strokeStyle = "rgba(200,230,255,0.5)";
-        ctx.lineWidth = 0.022;
+        ctx.strokeStyle = "rgba(200,230,255,0.45)";
+        ctx.lineWidth = 0.018;
         ctx.stroke();
       }
-      fenderLip(-0.82, 0.54, 0.60);
-      fenderLip(0.88, 0.53, 0.59);
+      fenderLip(-0.82);
+      fenderLip(0.88);
 
-      // 清晰肩線
+      // 肩線
       ctx.beginPath();
-      ctx.moveTo(-1.10, 0.18);
-      ctx.quadraticCurveTo(-0.20, 0.24, 0.40, 0.20);
-      ctx.quadraticCurveTo(0.95, 0.16, 1.24, 0.11);
-      ctx.strokeStyle = "rgba(10,40,80,0.4)";
-      ctx.lineWidth = 0.026;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(-1.10, 0.195);
-      ctx.quadraticCurveTo(-0.20, 0.255, 0.40, 0.215);
-      ctx.quadraticCurveTo(0.95, 0.175, 1.24, 0.125);
-      ctx.strokeStyle = "rgba(230,245,255,0.4)";
-      ctx.lineWidth = 0.014;
+      ctx.moveTo(-1.08, 0.16);
+      ctx.quadraticCurveTo(-0.10, 0.22, 0.40, 0.16);
+      ctx.quadraticCurveTo(0.95, 0.12, 1.24, 0.08);
+      ctx.strokeStyle = "rgba(10,40,80,0.35)";
+      ctx.lineWidth = 0.022;
       ctx.stroke();
 
-      // 三色飾條（淡藍／深藍／紅），沿肩線由引擎蓋到後輪拱
-      ctx.beginPath();
-      ctx.moveTo(-1.00, 0.10);
-      ctx.quadraticCurveTo(0.10, 0.16, 0.70, 0.14);
-      ctx.lineTo(1.16, 0.10);
-      ctx.strokeStyle = "rgba(255,255,255,0.28)";
-      ctx.lineWidth = 0.062;
-      ctx.stroke();
-      const stripeCols = ["#9ad0f5", "#0c3a68", "#e02a3c"];
-      function stripe(yOff, color) {
+      // 紅／藍飾條，沿肩線
+      function stripe(yOff, color, w) {
         ctx.beginPath();
-        ctx.moveTo(-0.98, 0.11 + yOff);
-        ctx.quadraticCurveTo(0.10, 0.17 + yOff, 0.70, 0.15 + yOff);
-        ctx.lineTo(1.16, 0.11 + yOff);
+        ctx.moveTo(-1.00, 0.12 + yOff);
+        ctx.quadraticCurveTo(0.05, 0.18 + yOff, 0.70, 0.14 + yOff);
+        ctx.lineTo(1.14, 0.09 + yOff);
         ctx.strokeStyle = color;
-        ctx.lineWidth = 0.014;
+        ctx.lineWidth = w;
         ctx.stroke();
       }
-      stripe(0.014, stripeCols[0]);
-      stripe(-0.002, stripeCols[1]);
-      stripe(-0.018, stripeCols[2]);
+      stripe(0.010, "#0c3a68", 0.016);
+      stripe(-0.006, "#e02a3c", 0.015);
 
       // 長引擎蓋折線
       ctx.beginPath();
-      ctx.moveTo(0.28, 0.22);
-      ctx.quadraticCurveTo(0.90, 0.16, 1.22, 0.12);
-      ctx.strokeStyle = "rgba(10,40,80,0.28)";
-      ctx.lineWidth = 0.016;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(0.50, 0.235);
-      ctx.lineTo(1.10, 0.145);
-      ctx.strokeStyle = "rgba(220,240,255,0.28)";
+      ctx.moveTo(0.32, 0.18);
+      ctx.quadraticCurveTo(0.90, 0.12, 1.22, 0.07);
+      ctx.strokeStyle = "rgba(10,40,80,0.25)";
       ctx.lineWidth = 0.014;
       ctx.stroke();
 
       // 車門
       ctx.beginPath();
-      ctx.moveTo(-0.02, -0.16);
-      ctx.lineTo(0.04, 0.22);
-      ctx.strokeStyle = "rgba(8,30,60,0.4)";
-      ctx.lineWidth = 0.018;
+      ctx.moveTo(0.02, -0.28);
+      ctx.lineTo(0.10, 0.18);
+      ctx.strokeStyle = "rgba(8,30,60,0.35)";
+      ctx.lineWidth = 0.016;
       ctx.stroke();
       ctx.beginPath();
-      ctx.roundRect(0.18, 0.10, 0.11, 0.032, 0.012);
+      ctx.roundRect(0.18, 0.08, 0.10, 0.028, 0.01);
       ctx.fillStyle = "#0c3a68";
       ctx.fill();
       ctx.beginPath();
-      ctx.roundRect(0.195, 0.11, 0.08, 0.012, 0.006);
+      ctx.roundRect(0.195, 0.088, 0.07, 0.012, 0.005);
       ctx.fillStyle = "#d0d8e4";
       ctx.fill();
 
       // 側裙
       ctx.beginPath();
-      ctx.moveTo(-0.28, -0.20);
-      ctx.lineTo(0.36, -0.20);
-      ctx.lineTo(0.34, -0.135);
-      ctx.lineTo(-0.26, -0.135);
+      ctx.moveTo(-0.28, -0.32);
+      ctx.lineTo(0.36, -0.32);
+      ctx.lineTo(0.34, -0.26);
+      ctx.lineTo(-0.26, -0.26);
       ctx.closePath();
       ctx.fillStyle = "#12151c";
       ctx.fill();
 
-      // 前輪後方小進氣口（抽象造型，不是廠徽）
+      // 前輪後方小進氣口
       ctx.beginPath();
-      ctx.moveTo(0.42, -0.02);
-      ctx.lineTo(0.56, 0.00);
-      ctx.lineTo(0.54, 0.08);
-      ctx.lineTo(0.40, 0.06);
+      ctx.moveTo(0.44, -0.06);
+      ctx.lineTo(0.58, -0.04);
+      ctx.lineTo(0.56, 0.06);
+      ctx.lineTo(0.42, 0.04);
       ctx.closePath();
       ctx.fillStyle = "#12151c";
       ctx.fill();
 
-      // 低寬前保桿：單一橫縫，絕非雙腎
+      // 低寬前保桿，單橫縫，不是雙腎
       ctx.beginPath();
-      ctx.moveTo(1.16, -0.20);
-      ctx.quadraticCurveTo(1.50, -0.14, 1.48, -0.02);
-      ctx.quadraticCurveTo(1.44, 0.08, 1.28, 0.10);
-      ctx.lineTo(1.18, 0.00);
-      ctx.quadraticCurveTo(1.20, -0.10, 1.16, -0.18);
+      ctx.moveTo(1.18, -0.30);
+      ctx.quadraticCurveTo(1.50, -0.24, 1.50, -0.06);
+      ctx.quadraticCurveTo(1.46, 0.06, 1.28, 0.08);
+      ctx.lineTo(1.20, -0.06);
+      ctx.quadraticCurveTo(1.22, -0.18, 1.18, -0.28);
       ctx.closePath();
-      const bg = ctx.createLinearGradient(1.18, 0.12, 1.50, -0.20);
+      const bg = ctx.createLinearGradient(1.20, 0.08, 1.50, -0.30);
       bg.addColorStop(0, "#5eb4ee");
       bg.addColorStop(0.45, "#1e82d0");
       bg.addColorStop(1, "#145a96");
       ctx.fillStyle = bg;
       ctx.fill();
       ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.022;
+      ctx.lineWidth = 0.02;
       ctx.stroke();
       ctx.beginPath();
-      ctx.roundRect(1.32, -0.12, 0.14, 0.06, 0.02);
+      ctx.roundRect(1.34, -0.16, 0.13, 0.05, 0.02);
       ctx.fillStyle = "#12151c";
       ctx.fill();
       ctx.beginPath();
-      ctx.roundRect(1.28, -0.20, 0.14, 0.035, 0.01);
+      ctx.roundRect(1.30, -0.30, 0.16, 0.036, 0.01);
       ctx.fillStyle = "#0e1218";
       ctx.fill();
 
-      // 雙圓頭燈（友善但帶一點銳利），無廠徽
       function lamp(cx, cy, r) {
         ctx.beginPath();
         ctx.arc(cx, cy, r * 1.08, 0, Math.PI * 2);
@@ -1477,131 +1411,120 @@
         ctx.strokeStyle = "rgba(230,245,255,0.95)";
         ctx.lineWidth = r * 0.16;
         ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(cx - r * 0.2, cy + r * 0.2, r * 0.18, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(255,255,255,0.8)";
-        ctx.fill();
       }
       ctx.beginPath();
-      ctx.ellipse(1.24, 0.04, 0.16, 0.15, -0.2, 0, Math.PI * 2);
+      ctx.ellipse(1.26, 0.00, 0.15, 0.13, -0.15, 0, Math.PI * 2);
       ctx.fillStyle = "#12151c";
       ctx.fill();
-      lamp(1.22, 0.09, 0.088);
-      lamp(1.28, -0.02, 0.072);
+      lamp(1.22, 0.05, 0.072);
+      lamp(1.30, -0.04, 0.062);
 
       // 短車尾
       ctx.beginPath();
-      ctx.moveTo(-1.14, -0.18);
-      ctx.quadraticCurveTo(-1.38, -0.12, -1.36, 0.04);
-      ctx.quadraticCurveTo(-1.34, 0.20, -1.20, 0.26);
-      ctx.lineTo(-1.12, 0.04);
-      ctx.quadraticCurveTo(-1.14, -0.08, -1.12, -0.16);
+      ctx.moveTo(-1.14, -0.28);
+      ctx.quadraticCurveTo(-1.38, -0.22, -1.36, 0.00);
+      ctx.quadraticCurveTo(-1.34, 0.18, -1.18, 0.24);
+      ctx.lineTo(-1.12, 0.02);
+      ctx.quadraticCurveTo(-1.14, -0.12, -1.12, -0.24);
       ctx.closePath();
-      const rg = ctx.createLinearGradient(-1.14, 0.26, -1.38, -0.18);
+      const rg = ctx.createLinearGradient(-1.14, 0.24, -1.38, -0.28);
       rg.addColorStop(0, "#4aa0e0");
       rg.addColorStop(1, "#145a96");
       ctx.fillStyle = rg;
       ctx.fill();
       ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.022;
+      ctx.lineWidth = 0.02;
       ctx.stroke();
-      // 與後甲板一體的小唇翼
+      // 小尾翼
       ctx.beginPath();
-      ctx.moveTo(-1.06, 0.46);
-      ctx.lineTo(-1.24, 0.47);
-      ctx.lineTo(-1.22, 0.52);
-      ctx.lineTo(-1.02, 0.50);
+      ctx.moveTo(-1.04, 0.44);
+      ctx.lineTo(-1.24, 0.45);
+      ctx.lineTo(-1.22, 0.50);
+      ctx.lineTo(-1.00, 0.48);
       ctx.closePath();
       ctx.fillStyle = "#1a78c4";
       ctx.fill();
       ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.018;
+      ctx.lineWidth = 0.016;
       ctx.stroke();
 
-      // 尾燈
       ctx.beginPath();
-      ctx.roundRect(-1.32, 0.06, 0.14, 0.16, 0.04);
+      ctx.roundRect(-1.32, 0.04, 0.14, 0.15, 0.035);
       ctx.fillStyle = "#3a1014";
       ctx.fill();
       ctx.beginPath();
-      ctx.roundRect(-1.30, 0.08, 0.10, 0.12, 0.03);
-      const tg = ctx.createLinearGradient(-1.30, 0.20, -1.20, 0.06);
+      ctx.roundRect(-1.30, 0.06, 0.10, 0.11, 0.025);
+      const tg = ctx.createLinearGradient(-1.30, 0.18, -1.20, 0.04);
       tg.addColorStop(0, "#ffb0a0");
       tg.addColorStop(0.45, "#e4453c");
       tg.addColorStop(1, "#7a1418");
       ctx.fillStyle = tg;
       ctx.fill();
 
-      // 四出排氣管（側視可見近側一對，遠側一對略縮）
       function tip(x, y, s) {
         ctx.beginPath();
-        ctx.ellipse(x, y, 0.035 * s, 0.022 * s, 0, 0, Math.PI * 2);
+        ctx.ellipse(x, y, 0.032 * s, 0.020 * s, 0, 0, Math.PI * 2);
         ctx.fillStyle = "#2a2c30";
         ctx.fill();
         ctx.beginPath();
-        ctx.ellipse(x - 0.01, y, 0.018 * s, 0.012 * s, 0, 0, Math.PI * 2);
+        ctx.ellipse(x - 0.008, y, 0.016 * s, 0.010 * s, 0, 0, Math.PI * 2);
         ctx.fillStyle = "#0e1014";
         ctx.fill();
       }
-      tip(-1.38, -0.10, 1);
-      tip(-1.38, -0.15, 1);
-      tip(-1.34, -0.10, 0.75);
-      tip(-1.34, -0.15, 0.75);
+      tip(-1.38, -0.18, 1);
+      tip(-1.38, -0.23, 1);
+      tip(-1.34, -0.18, 0.75);
+      tip(-1.34, -0.23, 0.75);
 
-      // 斜背側窗：前擋較傾、後玻往短甲板收，後緣帶一點前勾
+      // 斜背側窗
       ctx.beginPath();
-      ctx.moveTo(0.18, 0.24);
-      ctx.lineTo(-0.02, 0.66);
-      ctx.quadraticCurveTo(-0.30, 0.76, -0.62, 0.72);
-      ctx.lineTo(-0.92, 0.58);
-      ctx.lineTo(-1.00, 0.40);
-      ctx.lineTo(-0.90, 0.28);
-      ctx.lineTo(-0.78, 0.24);
+      ctx.moveTo(0.16, 0.22);
+      ctx.lineTo(-0.04, 0.62);
+      ctx.quadraticCurveTo(-0.30, 0.74, -0.62, 0.70);
+      ctx.lineTo(-0.90, 0.56);
+      ctx.lineTo(-0.98, 0.38);
+      ctx.lineTo(-0.88, 0.26);
+      ctx.lineTo(-0.74, 0.22);
       ctx.closePath();
-      const wg = ctx.createLinearGradient(-0.3, 0.24, -0.3, 0.76);
+      const wg = ctx.createLinearGradient(-0.3, 0.20, -0.3, 0.74);
       wg.addColorStop(0, "rgba(20, 42, 64, 0.94)");
       wg.addColorStop(0.55, "rgba(60, 110, 140, 0.80)");
       wg.addColorStop(1, "rgba(180, 215, 230, 0.70)");
       ctx.fillStyle = wg;
       ctx.fill();
       ctx.strokeStyle = "#12151c";
-      ctx.lineWidth = 0.046;
+      ctx.lineWidth = 0.042;
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(0.12, 0.30);
-      ctx.lineTo(-0.04, 0.62);
-      ctx.quadraticCurveTo(-0.30, 0.72, -0.60, 0.68);
-      ctx.lineTo(-0.88, 0.56);
-      ctx.lineTo(-0.94, 0.40);
-      ctx.lineTo(-0.86, 0.32);
+      ctx.moveTo(0.10, 0.28);
+      ctx.lineTo(-0.06, 0.58);
+      ctx.quadraticCurveTo(-0.30, 0.70, -0.58, 0.66);
+      ctx.lineTo(-0.86, 0.54);
       ctx.strokeStyle = "rgba(220,235,245,0.4)";
-      ctx.lineWidth = 0.016;
+      ctx.lineWidth = 0.014;
       ctx.stroke();
-      // 窗柱
       ctx.beginPath();
-      ctx.moveTo(-0.28, 0.26);
-      ctx.lineTo(-0.22, 0.68);
+      ctx.moveTo(-0.28, 0.24);
+      ctx.lineTo(-0.22, 0.66);
       ctx.strokeStyle = "rgba(18, 24, 32, 0.55)";
-      ctx.lineWidth = 0.03;
+      ctx.lineWidth = 0.028;
       ctx.stroke();
 
-      // 深色座艙，小小的駕駛剪影，不搶轎跑輪廓
       ctx.beginPath();
-      ctx.arc(-0.42, 0.40, 0.08, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(28, 22, 20, 0.7)";
+      ctx.arc(-0.44, 0.40, 0.07, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(28, 22, 20, 0.65)";
       ctx.fill();
       ctx.beginPath();
-      ctx.ellipse(-0.42, 0.30, 0.10, 0.06, 0, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(20, 28, 40, 0.65)";
+      ctx.ellipse(-0.44, 0.30, 0.09, 0.05, 0, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(20, 28, 40, 0.6)";
       ctx.fill();
 
-      // 後視鏡
       ctx.beginPath();
-      ctx.roundRect(0.22, 0.24, 0.13, 0.07, 0.02);
+      ctx.roundRect(0.20, 0.22, 0.12, 0.065, 0.018);
       ctx.fillStyle = "#12151c";
       ctx.fill();
       ctx.beginPath();
-      ctx.roundRect(0.245, 0.255, 0.09, 0.04, 0.012);
+      ctx.roundRect(0.225, 0.234, 0.08, 0.036, 0.01);
       ctx.fillStyle = "#8ab0c4";
       ctx.fill();
     });
@@ -1610,24 +1533,22 @@
   function drawRoofPanel() {
     if (!car || !car.roof) return;
     inBody(car.roof, function () {
-      // 車身同色的斜背頂蓋，掉落後露出深色開口
-      // 薄片、車身同色，順著斜背，避免看起來像一頂帽子
-      // 幾乎貼在車頂的薄蓋，大部分畫在車頂體下半，避免翹成尾翼
+      // 薄片貼齊車頂，避免看起來像車頂行李架
       ctx.beginPath();
-      ctx.moveTo(-0.48, -0.08);
-      ctx.quadraticCurveTo(-0.20, 0.04, 0.10, 0.03);
-      ctx.quadraticCurveTo(0.40, 0.00, 0.48, -0.08);
-      ctx.quadraticCurveTo(0.10, -0.12, -0.20, -0.12);
-      ctx.quadraticCurveTo(-0.40, -0.11, -0.48, -0.08);
+      ctx.moveTo(-0.42, -0.09);
+      ctx.quadraticCurveTo(-0.10, -0.01, 0.20, -0.03);
+      ctx.quadraticCurveTo(0.38, -0.06, 0.42, -0.09);
+      ctx.quadraticCurveTo(0.10, -0.12, -0.16, -0.12);
+      ctx.quadraticCurveTo(-0.34, -0.11, -0.42, -0.09);
       ctx.closePath();
-      const g = ctx.createLinearGradient(0, -0.12, 0, 0.04);
-      g.addColorStop(0, "#145a96");
-      g.addColorStop(0.45, "#2a92dc");
-      g.addColorStop(1, "#6eb8ec");
+      const g = ctx.createLinearGradient(0, -0.12, 0, 0.00);
+      g.addColorStop(0, "#1a78c4");
+      g.addColorStop(0.6, "#2a92dc");
+      g.addColorStop(1, "#5eb4ee");
       ctx.fillStyle = g;
       ctx.fill();
-      ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.016;
+      ctx.strokeStyle = "rgba(12,58,104,0.35)";
+      ctx.lineWidth = 0.012;
       ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(-0.28, -0.02);
