@@ -15,6 +15,9 @@
     TORQUE_REAR: 16,
     TORQUE_FRONT: 14,
     BRAKE_TORQUE: 28,
+    COAST_TORQUE: 2.2,     // 無輸入時的引擎煞車／滾動阻力；陡坡仍可緩緩下滑
+    STOP_VX: 0.28,         // 視為停穩的水平速度
+    REVERSE_HOLD_S: 0.6,   // 停穩後持續按住煞車，超過此時長才進入倒車
     SPRING_HZ: 4.2,
     SPRING_ZETA: 0.72,
     BREAK_WHEEL: 280,
@@ -405,7 +408,7 @@
   const LEVELS = [
     {
       id: 1, name: "場地熱身", hint: "輕踩油門，到旗門前緩緩煞車。",
-      par3: 12, par2: 18, cargo: false,
+      par3: 15, par2: 22, cargo: false,
       bot: [{ x: 0, v: 4.2 }, { x: 8, v: 5.5 }, { x: 18, v: 3.2 }, { x: 24, v: 1.2 }],
       build: function (b) { b.pad(8).flat(18).goal(8); }
     },
@@ -584,25 +587,69 @@
     };
   }
 
+  function resetDriveState() {
+    reversing = false; revHoldT = 0; revReady = false; brakePrev = false;
+    vfx = [];
+    syncRevBadge();
+  }
+  function syncRevBadge() {
+    const badge = document.getElementById("revBadge");
+    if (badge) badge.classList.toggle("on", !!reversing);
+  }
+  function updateRevState(dt) {
+    if (!car) return;
+    const brake = !!car.brake, gas = !!car.gas;
+    const vx = car.chassis.getLinearVelocity().x;
+    const stopped = Math.abs(vx) <= CFG.STOP_VX;
+    if (gas) {
+      reversing = false;
+      revHoldT = 0;
+      if (!stopped) revReady = false;
+    } else if (brake) {
+      if (reversing) {
+        revHoldT = 0;
+      } else if (stopped) {
+        if (revReady && !brakePrev) {
+          reversing = true;
+          revHoldT = 0;
+          revReady = false;
+        } else {
+          revHoldT += dt;
+          if (revHoldT >= CFG.REVERSE_HOLD_S) {
+            reversing = true;
+            revHoldT = 0;
+            revReady = false;
+          }
+        }
+      } else {
+        revHoldT = 0;
+      }
+    } else {
+      if (brakePrev && stopped) revReady = true;
+      if (!stopped) revReady = false;
+      reversing = false;
+      revHoldT = 0;
+    }
+    brakePrev = brake;
+    syncRevBadge();
+  }
   function applyDrive(car) {
     const gas = car.gas, brake = car.brake;
-    const vx = car.chassis.getLinearVelocity().x;
-    let speed = 0, torqueMul = 1, enable = true;
+    let speed = 0, torque = 0, enable = true, perWheel = false;
     if (gas && !brake) {
       speed = -CFG.MOTOR_SPEED;
-    } else if (brake && !gas) {
-      if (vx > 0.55) {
-        speed = CFG.MOTOR_SPEED * 0.85; // 前進中煞車＝反向扭力
-        torqueMul = 1.15;
-      } else {
-        speed = CFG.MOTOR_SPEED * 0.7; // 停穩後後退
-      }
-    } else if (brake && gas) {
+      perWheel = true;
+    } else if (brake && !gas && reversing) {
+      speed = CFG.MOTOR_SPEED * 0.7;
+      perWheel = true;
+    } else if (brake) {
+      // 真正的煞車：馬達速度 0、高扭力把車輪剎住
       speed = 0;
-      torqueMul = 1.2;
+      torque = CFG.BRAKE_TORQUE * (gas ? 1.05 : 1);
     } else {
-      enable = false;
+      // 無輸入：輕微引擎煞車，陡坡重力仍可慢慢下滑
       speed = 0;
+      torque = CFG.COAST_TORQUE;
     }
     [car.rear, car.front].forEach(function (w) {
       if (!w.joint || !w.joint.isActive || (w.joint.m_bodyA && !w.joint.m_bodyA.isActive())) return;
@@ -610,7 +657,7 @@
         if (!w.joint.getBodyA) return;
         w.joint.enableMotor(enable);
         w.joint.setMotorSpeed(speed);
-        w.joint.setMaxMotorTorque((brake && !gas && vx > 0.55 ? CFG.BRAKE_TORQUE : w.torque) * torqueMul);
+        w.joint.setMaxMotorTorque(perWheel ? w.torque : torque);
       } catch (e) {}
     });
   }
@@ -645,6 +692,8 @@
   let st = "menu"; // menu | countdown | play | pause | result | ads
   let tRun = 0, tGoal = 0, tOver = 0, tImmune = 0, countN = 0, countT = 0;
   let gasHeld = false, brakeHeld = false;
+  let reversing = false, revHoldT = 0, revReady = false, brakePrev = false;
+  let vfx = [];
   let camX = 0, camY = 1.2, result = null;
   let brokenCount = 0, cargoLost = false;
   let acc = 0, lastTs = 0;
@@ -665,7 +714,7 @@
     canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     viewW = w; viewH = h;
-    ppm = Math.max(32, Math.min(56, w / 18));
+    ppm = Math.max(38, Math.min(58, w / 15));
   }
 
   function destroyWorld() {
@@ -687,6 +736,7 @@
     camX = meta.spawn.x; camY = meta.spawn.y;
     gasHeld = false; brakeHeld = false;
     if (car) { car.gas = 0; car.brake = 0; }
+    resetDriveState();
     continueUsed = !!opts.keepContinueUsed && continueUsed;
     if (!opts.keepContinueUsed) { continueUsed = false; hideContinueBtn(); }
 
@@ -794,10 +844,13 @@
       car.gas = gasHeld ? 1 : 0;
       car.brake = brakeHeld ? 1 : 0;
       if (botMode) applyBot();
+      updateRevState(dt);
       applyDrive(car);
+      stepVfx(dt);
       if (motorAt === 0 && (car.gas || car.brake)) motorAt = performance.now();
     } else {
       car.gas = 0; car.brake = 0;
+      updateRevState(dt);
       applyDrive(car);
     }
     world.step(dt, CFG.VEL_IT, CFG.POS_IT);
@@ -930,26 +983,544 @@
     ctx.fillRect(0, Math.min(viewH, y0 + 18), viewW, viewH);
   }
 
+  function inBody(body, fn) {
+    if (!body) return;
+    const p = body.getPosition();
+    const a = body.getAngle();
+    ctx.save();
+    ctx.translate(wx(p.x), wy(p.y));
+    ctx.rotate(-a);
+    ctx.scale(ppm, -ppm);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    fn();
+    ctx.restore();
+  }
+
+  function polyPath(pts) {
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      if (i === 0) ctx.moveTo(pts[i][0], pts[i][1]);
+      else ctx.lineTo(pts[i][0], pts[i][1]);
+    }
+    ctx.closePath();
+  }
+
+  function strokeFill(fill, stroke, lw) {
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 0.03; ctx.stroke(); }
+  }
+
+  function drawBuggyWheel(wheelBody) {
+    inBody(wheelBody, function () {
+      const R = CFG.WHEEL_R;
+      const n = 14;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 1.08, 0, Math.PI * 2);
+      ctx.fillStyle = "#141210";
+      ctx.fill();
+      for (let i = 0; i < n; i++) {
+        const a0 = (i / n) * Math.PI * 2 - 0.04;
+        const a1 = a0 + (Math.PI * 2) / n * 0.58;
+        ctx.beginPath();
+        ctx.arc(0, 0, R * 1.12, a0, a1);
+        ctx.arc(0, 0, R * 0.86, a1, a0, true);
+        ctx.closePath();
+        ctx.fillStyle = i % 2 ? "#2c2824" : "#1f1c19";
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.84, 0, Math.PI * 2);
+      ctx.fillStyle = "#3b3530";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.70, 0, Math.PI * 2);
+      ctx.fillStyle = "#1a1715";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.66, 0, Math.PI * 2);
+      ctx.fillStyle = "#efe8db";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.58, 0, Math.PI * 2);
+      const rg = ctx.createRadialGradient(-0.04, 0.04, 0.02, 0, 0, R * 0.58);
+      rg.addColorStop(0, "#cfc6b8");
+      rg.addColorStop(1, "#8c8478");
+      ctx.fillStyle = rg;
+      ctx.fill();
+      ctx.strokeStyle = "#f6f1e8";
+      ctx.lineWidth = 0.05;
+      for (let i = 0; i < 5; i++) {
+        const a = i * Math.PI * 2 / 5;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * 0.09, Math.sin(a) * 0.09);
+        ctx.lineTo(Math.cos(a) * R * 0.55, Math.sin(a) * R * 0.55);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, 0.095, 0, Math.PI * 2);
+      ctx.fillStyle = "#e8e1d4";
+      ctx.fill();
+      ctx.strokeStyle = "#7a746a";
+      ctx.lineWidth = 0.018;
+      ctx.stroke();
+      for (let i = 0; i < 5; i++) {
+        const a = i * Math.PI * 2 / 5 + 0.32;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * 0.05, Math.sin(a) * 0.05, 0.012, 0, Math.PI * 2);
+        ctx.fillStyle = "#5c574f";
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.99, 0.65, 1.55);
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+      ctx.lineWidth = 0.03;
+      ctx.stroke();
+    });
+  }
+
+  function drawSuspension() {
+    if (!car) return;
+    inBody(car.chassis, function () {
+      [["rear", -0.82], ["front", 0.88]].forEach(function (pair) {
+        const w = pair[0] === "rear" ? car.rear : car.front;
+        if (!w || !w.body) return;
+        const wp = car.chassis.getLocalPoint(w.body.getPosition());
+        const ax = pair[1];
+        const inboard = ax + (pair[0] === "rear" ? 0.22 : -0.22);
+        ctx.strokeStyle = "#5a5550";
+        ctx.lineWidth = 0.058;
+        ctx.beginPath();
+        ctx.moveTo(inboard, -0.14);
+        ctx.lineTo(wp.x, wp.y);
+        ctx.stroke();
+        ctx.strokeStyle = "#9a948a";
+        ctx.lineWidth = 0.028;
+        ctx.beginPath();
+        ctx.moveTo(inboard, -0.14);
+        ctx.lineTo(wp.x, wp.y);
+        ctx.stroke();
+        const x0 = ax, y0 = 0.12, x1 = wp.x, y1 = wp.y + 0.06;
+        const dx = x1 - x0, dy = y1 - y0;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len, ny = dx / len;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        const coils = 7;
+        for (let i = 1; i < coils * 2; i++) {
+          const t = i / (coils * 2);
+          const off = (i % 2 ? 1 : -1) * 0.048;
+          ctx.lineTo(x0 + dx * t + nx * off, y0 + dy * t + ny * off);
+        }
+        ctx.lineTo(x1, y1);
+        ctx.strokeStyle = "#d2c6b0";
+        ctx.lineWidth = 0.038;
+        ctx.stroke();
+        ctx.fillStyle = "#6e6860";
+        ctx.beginPath(); ctx.arc(x0, y0, 0.035, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(wp.x, wp.y, 0.045, 0, Math.PI * 2); ctx.fill();
+      });
+    });
+  }
+
+  function drawHull() {
+    inBody(car.chassis, function () {
+      // 底盤陰影
+      polyPath([[-1.14, -0.30], [1.24, -0.30], [1.30, -0.18], [-1.20, -0.18]]);
+      ctx.fillStyle = "#0a2e2b";
+      ctx.fill();
+
+      // 主車體（底部挖出輪拱，讓輪胎與懸吊露出）
+      function archOver(cx, cy, rx, ry, a0, a1) {
+        for (let i = 0; i <= 12; i++) {
+          const ang = a0 + (a1 - a0) * (i / 12);
+          ctx.lineTo(cx + Math.cos(ang) * rx, cy + Math.sin(ang) * ry);
+        }
+      }
+      ctx.beginPath();
+      ctx.moveTo(-1.22, -0.20);
+      ctx.lineTo(-1.28, 0.02);
+      ctx.lineTo(-1.22, 0.22);
+      ctx.lineTo(-1.02, 0.70);
+      ctx.lineTo(-0.06, 0.70);
+      ctx.lineTo(0.16, 0.34);
+      ctx.lineTo(0.48, 0.22);
+      ctx.lineTo(1.34, 0.10);
+      ctx.lineTo(1.36, -0.08);
+      ctx.lineTo(1.26, -0.20);
+      archOver(0.88, -0.42, 0.47, 0.54, 0.38, Math.PI - 0.38);
+      ctx.lineTo(-0.36, -0.20);
+      archOver(-0.82, -0.42, 0.47, 0.54, 0.38, Math.PI - 0.38);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, -0.28, 0, 0.74);
+      g.addColorStop(0, "#0c403b");
+      g.addColorStop(0.4, "#17665e");
+      g.addColorStop(1, "#2aa394");
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = "#0a2c29";
+      ctx.lineWidth = 0.034;
+      ctx.stroke();
+
+      // 腰線高光
+      ctx.beginPath();
+      ctx.moveTo(-1.10, 0.10);
+      ctx.lineTo(0.40, 0.14);
+      ctx.lineTo(1.20, 0.04);
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+      ctx.lineWidth = 0.028;
+      ctx.stroke();
+
+      // 輪拱眉（加寬葉子板）
+      function fenderLip(cx) {
+        ctx.beginPath();
+        for (let i = 0; i <= 12; i++) {
+          const ang = 0.35 + (Math.PI - 0.70) * (i / 12);
+          const x = cx + Math.cos(ang) * 0.52, y = -0.42 + Math.sin(ang) * 0.58;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = "#1d7a71";
+        ctx.lineWidth = 0.09;
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(255,255,255,0.18)";
+        ctx.lineWidth = 0.025;
+        ctx.stroke();
+      }
+      fenderLip(-0.82);
+      fenderLip(0.88);
+
+      // 引擎蓋
+      polyPath([[0.18, 0.20], [1.12, 0.10], [1.16, 0.00], [0.22, 0.08]]);
+      ctx.fillStyle = "rgba(10,40,38,0.28)";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0.30, 0.16);
+      ctx.lineTo(1.06, 0.07);
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.lineWidth = 0.02;
+      ctx.stroke();
+
+      // 車門分割線
+      ctx.beginPath();
+      ctx.moveTo(-0.18, -0.18);
+      ctx.lineTo(-0.14, 0.28);
+      ctx.strokeStyle = "rgba(8,32,30,0.55)";
+      ctx.lineWidth = 0.022;
+      ctx.stroke();
+
+      // 前保險桿與牛欄
+      polyPath([[1.18, -0.22], [1.40, -0.16], [1.40, 0.00], [1.28, 0.06], [1.20, -0.04]]);
+      ctx.fillStyle = "#c5beb2";
+      ctx.fill();
+      ctx.strokeStyle = "#6e685e";
+      ctx.lineWidth = 0.025;
+      ctx.stroke();
+      ctx.strokeStyle = "#ddd6ca";
+      ctx.lineWidth = 0.045;
+      ctx.beginPath();
+      ctx.moveTo(1.30, -0.14);
+      ctx.lineTo(1.42, -0.10);
+      ctx.lineTo(1.42, 0.10);
+      ctx.lineTo(1.30, 0.12);
+      ctx.stroke();
+
+      // 頭燈
+      ctx.beginPath();
+      ctx.arc(1.22, 0.07, 0.09, 0, Math.PI * 2);
+      const lg = ctx.createRadialGradient(1.20, 0.09, 0.01, 1.22, 0.07, 0.09);
+      lg.addColorStop(0, "#fff6d0");
+      lg.addColorStop(0.55, "#ffe08a");
+      lg.addColorStop(1, "#c9a24a");
+      ctx.fillStyle = lg;
+      ctx.fill();
+      ctx.strokeStyle = "#6a5a30";
+      ctx.lineWidth = 0.02;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(1.195, 0.095, 0.028, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.fill();
+
+      // 後保險桿與尾燈
+      polyPath([[-1.30, -0.16], [-1.16, -0.22], [-1.14, 0.06], [-1.30, 0.10]]);
+      ctx.fillStyle = "#c5beb2";
+      ctx.fill();
+      ctx.strokeStyle = "#6e685e";
+      ctx.lineWidth = 0.025;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.roundRect(-1.30, 0.00, 0.12, 0.10, 0.03);
+      ctx.fillStyle = "#d4453a";
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,200,180,0.45)";
+      ctx.beginPath();
+      ctx.arc(-1.22, 0.08, 0.025, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 排氣管
+      ctx.beginPath();
+      ctx.roundRect(-1.34, -0.16, 0.16, 0.07, 0.03);
+      ctx.fillStyle = "#4a4642";
+      ctx.fill();
+      ctx.strokeStyle = "#2a2826";
+      ctx.lineWidth = 0.015;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(-1.34, -0.125, 0.03, 0, Math.PI * 2);
+      ctx.fillStyle = "#1a1918";
+      ctx.fill();
+
+      // 車窗
+      const win = [[-0.96, 0.30], [-0.14, 0.30], [-0.08, 0.66], [-0.98, 0.66]];
+      polyPath(win);
+      const wg = ctx.createLinearGradient(-0.5, 0.30, -0.5, 0.68);
+      wg.addColorStop(0, "rgba(70, 110, 125, 0.88)");
+      wg.addColorStop(1, "rgba(160, 205, 215, 0.72)");
+      ctx.fillStyle = wg;
+      ctx.fill();
+      ctx.strokeStyle = "#0a2c29";
+      ctx.lineWidth = 0.04;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-0.88, 0.60);
+      ctx.lineTo(-0.30, 0.60);
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 0.025;
+      ctx.stroke();
+
+      // 駕駛頭盔
+      ctx.beginPath();
+      ctx.arc(-0.54, 0.42, 0.135, 0, Math.PI * 2);
+      const hg = ctx.createRadialGradient(-0.58, 0.47, 0.02, -0.54, 0.42, 0.14);
+      hg.addColorStop(0, "#f3c56a");
+      hg.addColorStop(1, "#c47a2a");
+      ctx.fillStyle = hg;
+      ctx.fill();
+      ctx.strokeStyle = "#7a4a18";
+      ctx.lineWidth = 0.02;
+      ctx.stroke();
+      polyPath([[-0.66, 0.42], [-0.42, 0.42], [-0.40, 0.34], [-0.68, 0.34]]);
+      ctx.fillStyle = "#24333a";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-0.64, 0.40);
+      ctx.lineTo(-0.44, 0.40);
+      ctx.strokeStyle = "rgba(180,220,230,0.4)";
+      ctx.lineWidth = 0.015;
+      ctx.stroke();
+
+      // 防滾籠（留在車體上，車頂掉落後仍看得到）
+      ctx.strokeStyle = "#d9d2c6";
+      ctx.lineWidth = 0.055;
+      ctx.beginPath();
+      ctx.moveTo(-1.00, 0.18);
+      ctx.lineTo(-1.00, 0.72);
+      ctx.lineTo(-0.06, 0.72);
+      ctx.lineTo(-0.06, 0.20);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-1.00, 0.72);
+      ctx.lineTo(-0.92, 0.86);
+      ctx.lineTo(-0.14, 0.86);
+      ctx.lineTo(-0.06, 0.72);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-0.54, 0.72);
+      ctx.lineTo(-0.54, 0.86);
+      ctx.stroke();
+      ctx.strokeStyle = "#8a8478";
+      ctx.lineWidth = 0.018;
+      ctx.beginPath();
+      ctx.moveTo(-1.00, 0.18);
+      ctx.lineTo(-1.00, 0.72);
+      ctx.lineTo(-0.06, 0.72);
+      ctx.lineTo(-0.06, 0.20);
+      ctx.stroke();
+
+      // 後視鏡
+      ctx.beginPath();
+      ctx.roundRect(-0.08, 0.24, 0.12, 0.07, 0.02);
+      ctx.fillStyle = "#d8d2c6";
+      ctx.fill();
+      ctx.fillStyle = "#6a8a96";
+      ctx.beginPath();
+      ctx.roundRect(-0.06, 0.255, 0.08, 0.04, 0.01);
+      ctx.fill();
+    });
+  }
+
+  function drawRoofPanel() {
+    if (!car || !car.roof) return;
+    inBody(car.roof, function () {
+      ctx.beginPath();
+      ctx.roundRect(-0.50, -0.10, 1.00, 0.22, 0.08);
+      const g = ctx.createLinearGradient(0, -0.10, 0, 0.12);
+      g.addColorStop(0, "#fffaf2");
+      g.addColorStop(0.5, "#efe8db");
+      g.addColorStop(1, "#cfc4b0");
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = "#8a8174";
+      ctx.lineWidth = 0.03;
+      ctx.stroke();
+      ctx.strokeStyle = "#b9b0a2";
+      ctx.lineWidth = 0.022;
+      ctx.beginPath();
+      ctx.moveTo(-0.42, 0.06);
+      ctx.lineTo(0.42, 0.06);
+      ctx.moveTo(-0.42, -0.02);
+      ctx.lineTo(0.42, -0.02);
+      ctx.stroke();
+    });
+  }
+
+  function drawCargoPot(body) {
+    inBody(body, function () {
+      // 陶罐：圓形碰撞，視覺畫成有罐口、肩線與束帶的陶甕，避免看起來像球
+      ctx.beginPath();
+      ctx.moveTo(-0.11, -0.18);
+      ctx.quadraticCurveTo(-0.20, -0.04, -0.18, 0.06);
+      ctx.quadraticCurveTo(-0.16, 0.14, -0.10, 0.16);
+      ctx.lineTo(0.10, 0.16);
+      ctx.quadraticCurveTo(0.16, 0.14, 0.18, 0.06);
+      ctx.quadraticCurveTo(0.20, -0.04, 0.11, -0.18);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(-0.16, 0.16, 0.18, -0.18);
+      g.addColorStop(0, "#e08a58");
+      g.addColorStop(0.45, "#c45c36");
+      g.addColorStop(1, "#7a2c14");
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = "#5a200e";
+      ctx.lineWidth = 0.025;
+      ctx.stroke();
+      // 罐口
+      ctx.beginPath();
+      ctx.ellipse(0, 0.16, 0.11, 0.045, 0, 0, Math.PI * 2);
+      ctx.fillStyle = "#a34722";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(0, 0.175, 0.08, 0.03, 0, 0, Math.PI * 2);
+      ctx.fillStyle = "#4a1c10";
+      ctx.fill();
+      // 束帶
+      ctx.strokeStyle = "#d9a078";
+      ctx.lineWidth = 0.028;
+      ctx.beginPath();
+      ctx.ellipse(0, 0.02, 0.185, 0.05, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(-0.06, 0.08, 0.035, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,220,190,0.3)";
+      ctx.fill();
+    });
+  }
+
+  function drawCarShadow() {
+    if (!car) return;
+    const wr = car.rear && car.rear.body ? car.rear.body.getPosition() : null;
+    const wf = car.front && car.front.body ? car.front.body.getPosition() : null;
+    if (!wr || !wf) return;
+    const ch = car.chassis.getPosition();
+    const wrL = car.chassis.getLocalPoint(wr);
+    const wfL = car.chassis.getLocalPoint(wf);
+    const droop = Math.min(wrL.y, wfL.y);
+    const air = Math.max(0, Math.min(1, (-0.50 - droop) / 0.35));
+    const a = 0.22 * (1 - air);
+    if (a < 0.03) return;
+    const mx = (wr.x + wf.x) * 0.5, my = Math.min(wr.y, wf.y) - CFG.WHEEL_R * 0.15;
+    const sx = wx(mx), sy = wy(my);
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(-car.chassis.getAngle());
+    ctx.fillStyle = "rgba(40,24,12," + a + ")";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 1.35 * ppm, 0.22 * ppm, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function spawnVfx() {
+    if (!car || st !== "play") return;
+    const gas = !!car.gas && !reversing;
+    if (!gas) return;
+    if (Math.random() > 0.45) return;
+    const ex = car.chassis.getWorldPoint({ x: -1.34, y: -0.12 });
+    const ang = car.chassis.getAngle();
+    vfx.push({
+      kind: "exhaust",
+      x: ex.x, y: ex.y,
+      vx: -Math.cos(ang) * (0.6 + Math.random() * 0.5) + car.chassis.getLinearVelocity().x * 0.15,
+      vy: 0.2 + Math.random() * 0.4,
+      life: 0.45 + Math.random() * 0.25,
+      age: 0,
+      r: 0.07 + Math.random() * 0.04
+    });
+    const wr = car.rear.body.getPosition();
+    const wrL = car.chassis.getLocalPoint(wr);
+    if (wrL.y > -0.55 && Math.random() < 0.5) {
+      vfx.push({
+        kind: "dust",
+        x: wr.x - 0.15, y: wr.y - CFG.WHEEL_R * 0.8,
+        vx: -0.4 - Math.random() * 0.6, vy: 0.15 + Math.random() * 0.3,
+        life: 0.35 + Math.random() * 0.2,
+        age: 0,
+        r: 0.08 + Math.random() * 0.06
+      });
+    }
+  }
+
+  function stepVfx(dt) {
+    spawnVfx();
+    for (let i = vfx.length - 1; i >= 0; i--) {
+      const p = vfx[i];
+      p.age += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 0.4 * dt;
+      if (p.age >= p.life) vfx.splice(i, 1);
+    }
+    if (vfx.length > 40) vfx.splice(0, vfx.length - 40);
+  }
+
+  function drawVfx() {
+    for (let i = 0; i < vfx.length; i++) {
+      const p = vfx[i];
+      const u = 1 - p.age / p.life;
+      const cx = wx(p.x), cy = wy(p.y);
+      const rr = p.r * ppm * (0.7 + (1 - u) * 1.1);
+      ctx.beginPath();
+      ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+      if (p.kind === "exhaust") ctx.fillStyle = "rgba(70,66,62," + (0.28 * u) + ")";
+      else ctx.fillStyle = "rgba(170,130,80," + (0.30 * u) + ")";
+      ctx.fill();
+    }
+  }
+
+  function drawVehicle() {
+    if (!car) return;
+    drawCarShadow();
+    drawVfx();
+    if (car.rear && car.rear.body) drawBuggyWheel(car.rear.body);
+    if (car.front && car.front.body) drawBuggyWheel(car.front.body);
+    drawSuspension();
+    drawHull();
+    drawRoofPanel();
+    if (car.cargo) {
+      car.cargo.forEach(function (c) { if (c && c.body) drawCargoPot(c.body); });
+    }
+  }
+
   function drawBody(body) {
     const xf = body.getTransform();
     for (let f = body.getFixtureList(); f; f = f.getNext()) {
       const ud = f.getUserData() || {};
       const shape = f.getShape();
       const kind = ud.kind || "";
-      if (kind === "ground" || kind === "loop" || kind === "wall" || kind === "endwall") {
+      if (kind === "chassis" || kind === "ballast" || kind === "wheel" || kind === "roof" || kind === "pot") {
+        continue; // 車體改由 drawVehicle 繪製
+      } else if (kind === "ground" || kind === "loop" || kind === "wall" || kind === "endwall" || kind === "bowl" || kind === "ring") {
         drawShape(shape, xf, kind === "endwall" ? palette.dirtDark : palette.dirt, true);
-      } else if (kind === "wheel") {
-        drawWheel(body, xf, shape);
-      } else if (kind === "chassis") {
-        drawShape(shape, xf, palette.teal, false);
-        // 頭燈
-        const p = body.getWorldPoint({ x: 1.22, y: 0.02 });
-        ctx.fillStyle = "#f7e7a8";
-        ctx.beginPath(); ctx.arc(wx(p.x), wy(p.y), 4.2, 0, Math.PI * 2); ctx.fill();
-      } else if (kind === "roof") {
-        drawShape(shape, xf, palette.roof, false);
-      } else if (kind === "pot") {
-        drawShape(shape, xf, palette.pot, false);
       } else if (kind === "seesaw" || kind === "bridge" || kind === "plank" || kind === "crate") {
         drawShape(shape, xf, palette.wood, false);
       } else {
@@ -1075,6 +1646,7 @@
     drawGroundFill();
     drawFlag();
     for (let b = world.getBodyList(); b; b = b.getNext()) drawBody(b);
+    drawVehicle();
     if (DEBUG && car) {
       const p = car.chassis.getPosition();
       const v = car.chassis.getLinearVelocity();
@@ -1331,12 +1903,22 @@
   function setGas(v) {
     if (v && !gasHeld) inputAt = performance.now();
     gasHeld = !!v; syncPedals();
-    if (st === "play" && car && !adsPaused) { car.gas = gasHeld ? 1 : 0; applyDrive(car); if (v) motorAt = performance.now(); }
+    if (st === "play" && car && !adsPaused) {
+      car.gas = gasHeld ? 1 : 0;
+      updateRevState(0);
+      applyDrive(car);
+      if (v) motorAt = performance.now();
+    }
   }
   function setBrake(v) {
     if (v && !brakeHeld) inputAt = performance.now();
     brakeHeld = !!v; syncPedals();
-    if (st === "play" && car && !adsPaused) { car.brake = brakeHeld ? 1 : 0; applyDrive(car); if (v) motorAt = performance.now(); }
+    if (st === "play" && car && !adsPaused) {
+      car.brake = brakeHeld ? 1 : 0;
+      updateRevState(0);
+      applyDrive(car);
+      if (v) motorAt = performance.now();
+    }
   }
 
   function bindPedal(btn, setter) {
@@ -1457,7 +2039,8 @@
         st: st, tRun: tRun, level: level && level.id, name: level && level.name,
         x: p.x, y: p.y, vx: v.x, vy: v.y, gas: gasHeld, brake: brakeHeld,
         broken: brokenCount, cargoLost: cargoLost, fps: fpsNow,
-        result: result, adsPaused: adsPaused
+        result: result, adsPaused: adsPaused, reversing: !!reversing,
+        revReady: !!revReady, revHoldT: revHoldT
       };
     },
     pressGas: function (v) { setGas(!!v); },

@@ -43,9 +43,15 @@
     flex:1;min-height:88px;max-width:46%;border:0;border-radius:22px;font-size:22px;font-weight:700;
     letter-spacing:.08em;color:#fff;box-shadow:0 3px 0 rgba(0,0,0,.18);opacity:.92;
   }
-  #btnBrake{background:#a3452f;}
+  #btnBrake{background:#a3452f;position:relative;}
   #btnGas{background:#1f7a6f;}
   .pedal:active,.pedal.held{transform:translateY(2px);box-shadow:0 1px 0 rgba(0,0,0,.18);opacity:1;}
+  #revBadge{
+    display:none;position:absolute;top:8px;left:50%;transform:translateX(-50%);
+    font-size:11px;font-weight:700;letter-spacing:.18em;line-height:1;
+    background:#2b241c;color:#fbf6ee;border-radius:8px;padding:3px 7px;pointer-events:none;
+  }
+  #revBadge.on{display:block;}
   #hintBar{
     position:fixed;left:50%;transform:translateX(-50%);z-index:5;display:none;
     bottom:calc(112px + env(safe-area-inset-bottom,0px));
@@ -108,7 +114,7 @@
 <div id="hintBar"></div>
 <div id="count">3</div>
 <div id="controls">
-  <button type="button" class="pedal" id="btnBrake">煞車</button>
+  <button type="button" class="pedal" id="btnBrake">煞車<span id="revBadge">倒車</span></button>
   <button type="button" class="pedal" id="btnGas">油門</button>
 </div>
 
@@ -117,7 +123,7 @@
     <h1>穩當路試</h1>
     <div class="tag">每週小遊戲　第 1 週　油門與煞車的平衡課</div>
     <p>這是一輛還沒完全鎖緊的試作車。油門與煞車要細踩，衝太猛會翻車，撞擊過大時零件或貨物會掉下來。把車穩穩開到旗門即可。</p>
-    <p style="font-size:13px;color:#5a4e40;">觸控用左右兩顆按鈕；電腦可用方向鍵或 A／D、空白鍵煞車。停穩後再按煞車會後退。</p>
+    <p style="font-size:13px;color:#5a4e40;">觸控用左右兩顆按鈕；電腦可用方向鍵或 A／D，空白鍵、S、下鍵也可煞車。煞車會把車輪剎住，可停在坡上。完全停穩後再按一次，或停住後按住約 0.6 秒，才會倒車。</p>
     <div class="levels" id="levelList"></div>
   </div>
 </div>
