@@ -11,6 +11,9 @@
 <link rel="preload" as="image" href="assets/car-body.webp">
 <link rel="preload" as="image" href="assets/car-wheel.webp">
 <link rel="preload" as="image" href="assets/car-roof.webp">
+<link rel="preload" as="image" href="assets/bg/sky.webp">
+<link rel="preload" as="image" href="assets/bg/far.webp">
+<link rel="preload" as="image" href="assets/bg/mid.webp">
 <title>穩當路試</title>
 <style>
   html,body{
@@ -42,10 +45,17 @@
   .pedalHud .phSegs i:nth-child(4){height:11px;}
   .pedalHud .ph.brake .phSegs i.on{background:#a3452f;}
   .pedalHud .ph.gas .phSegs i.on{background:#1f7a6f;}
-  #btnPause{
-    pointer-events:auto;border:0;border-radius:16px;padding:8px 12px;font-size:14px;
+  .hudBtns{
+    position:fixed;top:calc(8px + env(safe-area-inset-top,0px));
+    right:calc(12px + env(safe-area-inset-right,0px));z-index:8;
+    display:flex;gap:8px;pointer-events:auto;
+  }
+  #btnPause,#btnMute{
+    border:0;border-radius:16px;padding:8px 12px;font-size:14px;
     background:rgba(251,246,238,.94);color:#2b241c;box-shadow:0 1px 4px rgba(0,0,0,.12);
   }
+  #btnMute[aria-pressed="false"]{opacity:.72;}
+  #btnPause[hidden]{display:none;}
   #controls{
     position:fixed;left:0;right:0;bottom:0;z-index:6;
     display:none;gap:12px;justify-content:space-between;align-items:stretch;
@@ -145,7 +155,10 @@
       <div class="ph gas" id="hudGas"><span>油門</span><span class="phSegs"><i></i><i></i><i></i><i></i></span></div>
     </div>
   </div>
-  <button type="button" id="btnPause">暫停</button>
+</div>
+<div class="hudBtns">
+  <button type="button" id="btnMute" aria-pressed="true">聲音 開</button>
+  <button type="button" id="btnPause" hidden>暫停</button>
 </div>
 <div id="hintBar"></div>
 <div id="count">3</div>
@@ -168,7 +181,7 @@
     <h1>穩當路試</h1>
     <div class="tag">每週小遊戲　第 1 週　油門與煞車的平衡課</div>
     <p>這是一輛還沒完全鎖緊的試作車。油門與煞車要細踩，衝太猛會翻車，撞擊過大時零件或貨物會掉下來。把車穩穩開到旗門即可。</p>
-    <p style="font-size:13px;color:#5a4e40;">觸控用左右兩顆按鈕：點下去先是輕踩，按住約 0.6 秒加到滿力，上下滑可直接調力度。電腦可用方向鍵或 W／S、A／D，空白鍵也可煞車，同樣會逐漸加力。煞車會把車輪剎住，可停在坡上。完全停穩後再按一次，或停住後按住約 0.6 秒，才會倒車。</p>
+    <p style="font-size:13px;color:#5a4e40;">觸控用左右兩顆按鈕：點下去先是輕踩，按住約 0.6 秒加到滿力，上下滑可直接調力度。電腦可用方向鍵或 W／S、A／D，空白鍵也可煞車，同樣會逐漸加力。煞車會把車輪剎住，可停在坡上。完全停穩後再按一次，或停住後按住約 0.6 秒，才會倒車。右上可開關聲音，預設音量較低。</p>
     <div class="levels" id="levelList"></div>
   </div>
 </div>

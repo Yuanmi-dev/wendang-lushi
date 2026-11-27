@@ -120,16 +120,174 @@
       return {
         stars: s.stars || {},
         bestTime: s.bestTime || {},
-        unlocked: s.unlocked || 1
+        unlocked: s.unlocked || 1,
+        muted: !!s.muted
       };
     } catch (e) {
-      return { stars: {}, bestTime: {}, unlocked: 1 };
+      return { stars: {}, bestTime: {}, unlocked: 1, muted: false };
     }
   }
   function saveStore() {
     localStorage.setItem(STORE_KEY, JSON.stringify(store));
   }
   let store = loadStore();
+
+  const bgImgs = { sky: new Image(), far: new Image(), mid: new Image() };
+  ["sky", "far", "mid"].forEach(function (k) { bgImgs[k].src = "assets/bg/" + k + ".webp"; });
+
+  const AUDIO_FILES = {
+    engine: "assets/audio/engine",
+    brake: "assets/audio/brake",
+    crash: "assets/audio/crash",
+    land: "assets/audio/land",
+    fanfare: "assets/audio/fanfare",
+    tap: "assets/audio/tap",
+    bgm: "assets/audio/bgm"
+  };
+  const VOL_SFX = 0.32, VOL_BGM = 0.14;
+  const audio = {
+    ctx: null, master: null, sfxG: null, bgmG: null,
+    bufs: {}, unlocked: false, bgmNode: null, engNode: null, engGain: null,
+    lastSkidAt: 0, lastLandAt: 0, wasAir: false
+  };
+  function audioMuted() { return !!(store.muted || adsSoundMuted); }
+  function applyAudioMute() {
+    if (!audio.master || !audio.ctx) return;
+    const on = audio.unlocked && !audioMuted();
+    audio.master.gain.setTargetAtTime(on ? 1 : 0, audio.ctx.currentTime, 0.03);
+  }
+  function syncMuteBtn() {
+    const btn = document.getElementById("btnMute");
+    if (!btn) return;
+    btn.setAttribute("aria-pressed", store.muted ? "false" : "true");
+    btn.textContent = store.muted ? "聲音 關" : "聲音 開";
+  }
+  function setMuted(on) {
+    store.muted = !!on;
+    saveStore();
+    applyAudioMute();
+    syncMuteBtn();
+  }
+  function syncPauseBtn() {
+    const btn = document.getElementById("btnPause");
+    if (!btn) return;
+    const show = st === "play" || st === "countdown" || st === "pause";
+    btn.hidden = !show;
+  }
+  function preloadAudioBuf(base, key) {
+    const urls = [base + ".mp3", base + ".ogg"];
+    function tryAt(i) {
+      if (i >= urls.length || !audio.ctx) return;
+      fetch(urls[i]).then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(); })
+        .then(function (ab) { return audio.ctx.decodeAudioData(ab.slice(0)); })
+        .then(function (buf) {
+          audio.bufs[key] = buf;
+          if (key === "bgm") startBgm();
+          if (key === "engine") ensureEngine();
+        })
+        .catch(function () { tryAt(i + 1); });
+    }
+    tryAt(0);
+  }
+  function unlockAudio() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!audio.ctx) {
+        audio.ctx = new AC();
+        audio.master = audio.ctx.createGain();
+        audio.sfxG = audio.ctx.createGain();
+        audio.bgmG = audio.ctx.createGain();
+        audio.sfxG.gain.value = VOL_SFX;
+        audio.bgmG.gain.value = VOL_BGM;
+        audio.sfxG.connect(audio.master);
+        audio.bgmG.connect(audio.master);
+        audio.master.connect(audio.ctx.destination);
+        audio.master.gain.value = 0;
+        Object.keys(AUDIO_FILES).forEach(function (k) { preloadAudioBuf(AUDIO_FILES[k], k); });
+      }
+      if (audio.ctx.state === "suspended") audio.ctx.resume();
+      audio.unlocked = true;
+      applyAudioMute();
+      startBgm();
+    } catch (e) {}
+  }
+  function playSfx(key, opts) {
+    opts = opts || {};
+    if (!audio.ctx || !audio.unlocked || audioMuted()) return null;
+    const buf = audio.bufs[key];
+    if (!buf) return null;
+    const src = audio.ctx.createBufferSource();
+    src.buffer = buf;
+    if (opts.rate) src.playbackRate.value = opts.rate;
+    const g = audio.ctx.createGain();
+    g.gain.value = opts.vol != null ? opts.vol : 1;
+    src.connect(g);
+    g.connect(audio.sfxG);
+    try { src.start(); } catch (e) { return null; }
+    return src;
+  }
+  function startBgm() {
+    if (!audio.ctx || !audio.unlocked || audio.bgmNode || !audio.bufs.bgm) return;
+    const src = audio.ctx.createBufferSource();
+    src.buffer = audio.bufs.bgm;
+    src.loop = true;
+    src.connect(audio.bgmG);
+    try { src.start(); } catch (e) { return; }
+    audio.bgmNode = src;
+  }
+  function ensureEngine() {
+    if (audio.engNode || !audio.bufs.engine || !audio.ctx || !audio.unlocked) return;
+    const src = audio.ctx.createBufferSource();
+    src.buffer = audio.bufs.engine;
+    src.loop = true;
+    const g = audio.ctx.createGain();
+    g.gain.value = 0;
+    src.connect(g);
+    g.connect(audio.sfxG);
+    try { src.start(); } catch (e) { return; }
+    audio.engNode = src;
+    audio.engGain = g;
+  }
+  function updateEngine(strength, playing) {
+    if (!audio.ctx || !audio.unlocked) return;
+    ensureEngine();
+    if (!audio.engGain || !audio.engNode) return;
+    const t = audio.ctx.currentTime;
+    const on = playing && strength > 0.02 && !audioMuted();
+    const vol = on ? (0.08 + 0.55 * strength) : 0;
+    const rate = 0.78 + 0.55 * Math.max(0, strength);
+    try {
+      audio.engGain.gain.setTargetAtTime(vol, t, 0.06);
+      audio.engNode.playbackRate.setTargetAtTime(rate, t, 0.08);
+    } catch (e) {}
+  }
+  function tickGameAudio() {
+    const playing = st === "play" && !!car && !adsPaused && !botMode;
+    const gas = playing && car ? (car.gas || 0) : 0;
+    updateEngine(gas, playing);
+  }
+  function tickImpactAudio() {
+    if (st !== "play" || !car || botMode) return;
+    const wr = car.rear && car.rear.body ? car.rear.body.getPosition() : null;
+    const wf = car.front && car.front.body ? car.front.body.getPosition() : null;
+    if (!wr || !wf) return;
+    const wrL = car.chassis.getLocalPoint(wr);
+    const wfL = car.chassis.getLocalPoint(wf);
+    const droop = Math.min(wrL.y, wfL.y);
+    const air = droop < -0.50;
+    const vy = car.chassis.getLinearVelocity().y;
+    if (audio.wasAir && !air && vy < -1.2 && tRun - (audio.lastLandAt || 0) > 0.28) {
+      audio.lastLandAt = tRun;
+      playSfx("land", { vol: Math.min(1, 0.4 + Math.abs(vy) * 0.12) });
+    }
+    audio.wasAir = air;
+    const vx = car.chassis.getLinearVelocity().x;
+    if ((car.brake || 0) > 0.35 && Math.abs(vx) > 3 && tRun - (audio.lastSkidAt || 0) > 0.7) {
+      audio.lastSkidAt = tRun;
+      playSfx("brake", { vol: Math.min(1, 0.35 + car.brake * 0.4) });
+    }
+  }
 
   // ---------- 廣告包裝 ----------
   let adsPaused = false, adsSoundMuted = false, adCompletedRuns = 0;
@@ -155,11 +313,13 @@
   function pauseForAd() {
     adsPaused = true;
     adsSoundMuted = true;
+    applyAudioMute();
   }
   function resumeAfterAd() {
     adsPaused = false;
     adsSoundMuted = false;
     hideFakeAd();
+    applyAudioMute();
   }
   function hideFakeAd() {
     if (fakeAdTimer) { clearTimeout(fakeAdTimer); fakeAdTimer = 0; }
@@ -901,6 +1061,7 @@
       saveStore();
     }
     st = "result";
+    if (ok) playSfx("fanfare");
     showResult();
     if (!ok) offerRewardRetry();
   }
@@ -933,6 +1094,7 @@
     const n = (tImmune > 0 ? 0 : queueBreaks(world, car.breakables, 1 / dt)) + nw;
     if (n) {
       brokenCount += n;
+      playSfx("crash");
       car.breakables.forEach(function (it) {
         if (it.kind === "pot" && it.broken) cargoLost = true;
       });
@@ -950,6 +1112,7 @@
       });
     }
     if (st !== "play") return;
+    tickImpactAudio();
     const p = car.chassis.getPosition();
     if (p.y < (meta.killY != null ? meta.killY : CFG.KILL_Y)) {
       finishRun(false, "掉出跑道");
@@ -1141,6 +1304,21 @@
     };
   }
 
+  function drawTiledBg(img, yBottom, drawH, parallax, alpha) {
+    if (!spriteOk(img) || drawH <= 0) return;
+    const scale = drawH / img.naturalHeight;
+    const tw = img.naturalWidth * scale;
+    if (tw < 8) return;
+    const shift = -(((camX * ppm * parallax) % tw) + tw) % tw;
+    ctx.save();
+    if (alpha != null && alpha < 1) ctx.globalAlpha = alpha;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    for (let x = shift; x < viewW; x += tw) {
+      ctx.drawImage(img, x, yBottom - drawH, tw, drawH);
+    }
+    ctx.restore();
+  }
   function drawSky() {
     const g = ctx.createLinearGradient(0, 0, 0, viewH);
     g.addColorStop(0, palette.skyTop);
@@ -1148,16 +1326,29 @@
     g.addColorStop(1, "#d9b07a");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, viewW, viewH);
-    // 遠丘
-    ctx.fillStyle = "rgba(180,120,70,0.18)";
-    ctx.beginPath();
-    ctx.moveTo(0, viewH * 0.62);
-    for (let i = 0; i <= 8; i++) {
-      const xx = (i / 8) * viewW;
-      const yy = viewH * 0.52 + Math.sin(i * 1.3 + camX * 0.02) * 28;
-      ctx.lineTo(xx, yy);
+    const horizon = meta ? wy(0) : viewH * 0.62;
+    if (spriteOk(bgImgs.sky)) {
+      const skyH = Math.max(horizon + 28, viewH * 0.72);
+      drawTiledBg(bgImgs.sky, skyH, skyH, 0.035, 1);
     }
-    ctx.lineTo(viewW, viewH); ctx.lineTo(0, viewH); ctx.fill();
+    if (spriteOk(bgImgs.far)) {
+      const fh = Math.max(80, Math.min(viewH * 0.28, 190));
+      drawTiledBg(bgImgs.far, horizon + fh * 0.08, fh, 0.12, 1);
+    } else {
+      ctx.fillStyle = "rgba(180,120,70,0.18)";
+      ctx.beginPath();
+      ctx.moveTo(0, viewH * 0.62);
+      for (let i = 0; i <= 8; i++) {
+        const xx = (i / 8) * viewW;
+        const yy = viewH * 0.52 + Math.sin(i * 1.3 + camX * 0.02) * 28;
+        ctx.lineTo(xx, yy);
+      }
+      ctx.lineTo(viewW, viewH); ctx.lineTo(0, viewH); ctx.fill();
+    }
+    if (spriteOk(bgImgs.mid)) {
+      const mh = Math.max(64, Math.min(viewH * 0.2, 150));
+      drawTiledBg(bgImgs.mid, horizon + 2, mh, 0.28, 1);
+    }
   }
 
   function drawGroundFill() {
@@ -1596,6 +1787,7 @@
     el.count.classList.remove("on");
     renderMenu();
     destroyWorld();
+    syncPauseBtn();
   }
 
   function startLevel(id, opts) {
@@ -1619,6 +1811,10 @@
     syncPedals();
     if (opts.bot) botMode = true;
     if (AUTO_BOT) botMode = true;
+    audio.wasAir = false;
+    audio.lastSkidAt = 0;
+    audio.lastLandAt = 0;
+    syncPauseBtn();
   }
 
   function beginPlay() {
@@ -1634,6 +1830,7 @@
     setSheet("pause");
     document.getElementById("pauseHint").textContent = level.hint;
     el.controls.classList.remove("on");
+    syncPauseBtn();
   }
   function resumePlay() {
     if (st !== "pause") return;
@@ -1661,6 +1858,7 @@
     const hasNext = r.ok && level.id < LEVELS.length;
     el.btnNext.style.display = hasNext ? "" : "none";
     el.hudSub.textContent = r.ok ? ("完成　" + r.time.toFixed(2) + " 秒") : r.reason;
+    syncPauseBtn();
   }
 
   function offerRewardRetry() {
@@ -1773,6 +1971,7 @@
       }
     }
     syncPedals();
+    tickGameAudio();
     draw();
     requestAnimationFrame(loop);
   }
@@ -1927,6 +2126,22 @@
   window.addEventListener("contextmenu", function (ev) { ev.preventDefault(); });
   window.addEventListener("blur", function () { setGas(false); setBrake(false); });
 
+  window.addEventListener("pointerdown", function () { unlockAudio(); }, true);
+  window.addEventListener("keydown", function () { unlockAudio(); }, true);
+  document.getElementById("btnMute").addEventListener("click", function (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    unlockAudio();
+    if (!store.muted) playSfx("tap");
+    setMuted(!store.muted);
+  });
+  document.getElementById("btnMute").addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
+  document.addEventListener("click", function (ev) {
+    const btn = ev.target && ev.target.closest && ev.target.closest("button");
+    if (!btn || btn.id === "btnGas" || btn.id === "btnBrake" || btn.id === "btnMute") return;
+    unlockAudio();
+    playSfx("tap");
+  });
   document.getElementById("btnPause").addEventListener("click", showPause);
   document.getElementById("btnResume").addEventListener("click", resumePlay);
   document.getElementById("btnRetryPause").addEventListener("click", function () { startLevel(level.id); });
@@ -2053,8 +2268,9 @@
     goNextOrMenu: goNextOrMenu,
     store: function () { return JSON.parse(JSON.stringify(store)); },
     resetStore: function () {
-      store = { stars: {}, bestTime: {}, unlocked: 1 };
+      store = { stars: {}, bestTime: {}, unlocked: 1, muted: !!(store && store.muted) };
       saveStore();
+      syncMuteBtn();
       renderMenu();
     }
   };
@@ -2069,6 +2285,8 @@
   }
   layout();
   renderMenu();
+  syncMuteBtn();
+  syncPauseBtn();
   installAdsTag();
   lastTs = performance.now();
   requestAnimationFrame(loop);

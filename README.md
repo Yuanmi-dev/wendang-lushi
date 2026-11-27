@@ -12,15 +12,17 @@
 
 觸控用畫面上的「油門」「煞車」兩顆按鈕：點下去先是輕踩（約四分之一力），按住約 0.6 秒加到滿力，放開約 0.1 秒收掉；按住時上下滑可直接調力度。電腦可用方向鍵或 W／S、A／D，空白鍵也可煞車，同樣會逐漸加力。煞車會把車輪剎住（可停在坡上）。完全停穩後再按一次，或停住後按住約 0.6 秒，才會倒車；倒車時煞車鍵上方會顯示「倒車」。鬆開所有按鍵時有輕微的引擎煞車，但陡坡仍可能緩緩滑下。開始與重開前有 3 秒倒數。
 
-過關依時間給 1～3 顆星；若該關有陶罐，陶罐掉落會少一顆星，零件脫落也會少一顆星。進度存在瀏覽器 `localStorage`（鍵名 `wendangLushi.v1`）。
+過關依時間給 1～3 顆星；若該關有陶罐，陶罐掉落會少一顆星，零件脫落也會少一顆星。進度存在瀏覽器 `localStorage`（鍵名 `wendangLushi.v1`）。右上可開關聲音，狀態存在同一存檔的 `muted` 欄位；預設音量較低。
 
 ## 架構
 
-- `index.html`：繁中介面、全螢幕版面、踏板與選單。
-- `game.js`：關卡、物理、繪製、存檔、廣告呼叫點與自動檢查介面 `window.__WENDANG__`。
+- `index.html`：繁中介面、全螢幕版面、踏板、選單與靜音按鈕。
+- `game.js`：關卡、物理、繪製、存檔、音效、廣告呼叫點與自動檢查介面 `window.__WENDANG__`。
+- `assets/bg/`：可水平平鋪的視差背景（天空、遠景、中景，webp）。
+- `assets/audio/`：引擎迴圈、煞車、撞擊、落地、過關與點擊音效，以及一軌配樂迴圈（mp3／ogg）。
 - `vendor/planck.min.js`：本機打包的 [planck.js](https://github.com/shakiba/planck.js) 1.5.1（MIT，Box2D 的 JS 移植）。授權見 `vendor/planck.LICENSE.txt`。
 
-固定 60 Hz 模擬（`World.step`，速度迭代 8、位置迭代 3）。重力 9.81 m/s²。車輛有車體、可焊斷的車頂、前後輪的 WheelJoint（扭力、懸吊彈簧與阻尼、地面摩擦）；貨物以 WeldJoint 固定。關卡以手刻路段組合：平地、坡、跳台、蹺板、木橋、脆弱棧道、餘弦凹槽與圓丘。美術為程序繪製的 Canvas 2D，沒有外部圖檔依賴。
+固定 60 Hz 模擬（`World.step`，速度迭代 8、位置迭代 3）。重力 9.81 m/s²。車輛有車體、可焊斷的車頂、前後輪的 WheelJoint（扭力、懸吊彈簧與阻尼、地面摩擦）；貨物以 WeldJoint 固定。關卡以手刻路段組合：平地、坡、跳台、蹺板、木橋、脆弱棧道、餘弦凹槽與圓丘。畫面含車體精靈與視差背景；音效用 Web Audio API，第一次點擊後解鎖，廣告期間會暫時靜音。
 
 廣告採 Google Ad Placement API 預埋 `adBreak`／`adConfig`，寫法與白雞跳跳 v0.2 相同。尚無 publisher id；預設 `CFG.ADS_ENABLED` 為關閉。沒有廣告、被擋或回呼失敗時，遊戲會照常進行。
 
@@ -58,7 +60,7 @@
 ## 部署
 
 1. 先 `git pull --rebase`，再改檔，一般 `git push`，不要 force push。
-2. 把本資料夾（`index.html`、`game.js`、`vendor/`、README、run-log）提交到本儲存庫的 `main`。GitHub Pages 由此分支根目錄發布。
+2. 把本資料夾（`index.html`、`game.js`、`assets/`、`vendor/`、README、run-log）提交到本儲存庫的 `main`。GitHub Pages 由此分支根目錄發布。
 3. 不要部署到 yuanmi.tw 或其他正式網域，除非另行決定。
 4. 本機預覽可用 `python3 -m http.server 8765`，瀏覽器打開 `http://localhost:8765/`。測試廣告流程請用 `http://localhost:8765/?debug=1&fakead=1`。
 
