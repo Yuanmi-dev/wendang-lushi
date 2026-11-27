@@ -694,7 +694,7 @@
   let gasHeld = false, brakeHeld = false;
   let reversing = false, revHoldT = 0, revReady = false, brakePrev = false;
   let vfx = [];
-  let camX = 0, camY = 1.2, result = null;
+  let camX = 0, camY = 1.2, camAx = 0.33, camAy = 0.56, result = null;
   let brokenCount = 0, cargoLost = false;
   let acc = 0, lastTs = 0;
   let inputAt = 0, motorAt = 0; // 延遲量測
@@ -714,7 +714,16 @@
     canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     viewW = w; viewH = h;
-    ppm = Math.max(38, Math.min(58, w / 15));
+    if (h > w * 1.15) {
+      // 直式手機：略為拉近，讓車體更大，同時還留得出前方路面
+      ppm = Math.max(44, Math.min(54, w / 8.3));
+    } else {
+      ppm = Math.max(36, Math.min(56, Math.min(w / 15.5, h / 9.5)));
+    }
+  }
+
+  function isPortrait() {
+    return viewH > viewW * 1.15;
   }
 
   function destroyWorld() {
@@ -741,6 +750,7 @@
     if (!opts.keepContinueUsed) { continueUsed = false; hideContinueBtn(); }
 
     for (let i = 0; i < 45; i++) { world.step(CFG.TICK, CFG.VEL_IT, CFG.POS_IT); world.clearForces(); }
+    if (car) snapCam();
     world.on("post-solve", function (contact, impulse) {
       const im = impulse && impulse.normalImpulses ? impulse.normalImpulses[0] : 0;
       if (!(im > 0)) return;
@@ -939,19 +949,128 @@
   }
 
   // ---------- 繪製 ----------
-  function wx(x) { return (x - camX) * ppm + viewW * 0.38; }
-  function wy(y) { return viewH * 0.68 - (y - camY) * ppm; }
+  function wx(x) { return (x - camX) * ppm + viewW * camAx; }
+  function wy(y) { return viewH * camAy - (y - camY) * ppm; }
 
-  function updateCam(alpha) {
+  function vehicleAABB() {
+    const box = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    function add(x, y) {
+      if (x < box.minX) box.minX = x;
+      if (x > box.maxX) box.maxX = x;
+      if (y < box.minY) box.minY = y;
+      if (y > box.maxY) box.maxY = y;
+    }
+    function addLocal(body, lx, ly) {
+      if (!body) return;
+      const p = body.getWorldPoint({ x: lx, y: ly });
+      add(p.x, p.y);
+    }
+    if (car && car.chassis) {
+      // 含牛欄、排氣管與車頂的外輪廓，再留一點餘裕
+      const corners = [
+        [-1.42, -0.35], [1.50, -0.35], [1.50, 0.95], [-1.42, 0.95]
+      ];
+      for (let i = 0; i < corners.length; i++) addLocal(car.chassis, corners[i][0], corners[i][1]);
+    }
+    [car.rear, car.front].forEach(function (w) {
+      if (!w || !w.body) return;
+      const p = w.body.getPosition();
+      const r = CFG.WHEEL_R * 1.16;
+      add(p.x - r, p.y - r); add(p.x + r, p.y + r);
+    });
+    if (car.roof) {
+      const p = car.roof.getPosition();
+      add(p.x - 0.58, p.y - 0.16); add(p.x + 0.58, p.y + 0.20);
+    }
+    if (car.cargo) {
+      car.cargo.forEach(function (c) {
+        if (!c || !c.body) return;
+        const p = c.body.getPosition();
+        add(p.x - 0.24, p.y - 0.24); add(p.x + 0.24, p.y + 0.24);
+      });
+    }
+    return box;
+  }
+
+  function camPads() {
+    return {
+      l: 16,
+      r: 16,
+      t: 70,
+      b: Math.min(viewH * 0.24, isPortrait() ? 150 : 96)
+    };
+  }
+
+  function clampCam(cx, cy, ax, ay, box) {
+    const pads = camPads();
+    const maxCx = box.minX + (viewW * ax - pads.l) / ppm;
+    const minCx = box.maxX - (viewW * (1 - ax) - pads.r) / ppm;
+    if (minCx <= maxCx) cx = Math.max(minCx, Math.min(maxCx, cx));
+    else cx = (box.minX + box.maxX) * 0.5;
+    const minCy = box.maxY - (viewH * ay - pads.t) / ppm;
+    const maxCy = box.minY + (viewH * (1 - ay) - pads.b) / ppm;
+    if (minCy <= maxCy) cy = Math.max(minCy, Math.min(maxCy, cy));
+    else cy = (box.minY + box.maxY) * 0.5;
+    return { x: cx, y: cy };
+  }
+
+  function snapCam() {
+    updateCam(1, true);
+  }
+
+  function updateCam(alpha, snap) {
     if (!car) return;
+    const portrait = isPortrait();
     const p = car.chassis.getPosition();
     const v = car.chassis.getLinearVelocity();
-    const look = Math.max(2.5, Math.min(7, 3 + v.x * 0.35));
-    const tx = p.x + look * 0.55;
-    const ty = p.y + 0.4;
-    const k = 1 - Math.pow(0.001, Math.max(0.001, alpha || 0.016));
-    camX += (tx - camX) * Math.min(1, k * 8);
+    const goingLeft = v.x < -0.85 || (reversing && v.x < 0.15);
+    const baseAx = portrait ? 0.33 : 0.36;
+    let ax = goingLeft ? (1 - baseAx) : baseAx;
+    const speed = Math.abs(v.x);
+    // 車體本身已在畫面 30–35%，只需依速度做很小的前視，避免被推到左緣
+    const leadT = Math.max(0, Math.min(1, (speed - 2) / 12));
+    ax += (goingLeft ? 1 : -1) * leadT * 0.02; // 0.33 → 約 0.31
+    const lookX = Math.max(0, Math.min(0.45, speed * 0.04)) * (goingLeft ? -1 : 1);
+    let tx = p.x + lookX;
+    let pitch = car.chassis.getAngle();
+    while (pitch > Math.PI) pitch -= Math.PI * 2;
+    while (pitch < -Math.PI) pitch += Math.PI * 2;
+    let lookY = portrait ? 0.22 : 0.32;
+    lookY += Math.max(-0.9, Math.min(1.3, v.y * 0.28));
+    if (pitch > 0.12) lookY += Math.min(1.1, pitch * 1.05);
+    if (pitch < -0.12) lookY += Math.max(-1.0, pitch * 0.9);
+    let ty = p.y + lookY;
+    const ay = portrait ? 0.54 : 0.62;
+    const box = vehicleAABB();
+    const cl = clampCam(tx, ty, ax, ay, box);
+    tx = cl.x; ty = cl.y;
+    if (snap) {
+      camX = tx; camY = ty; camAx = ax; camAy = ay;
+      return;
+    }
+    const k = 1 - Math.pow(0.001, Math.max(0.001, alpha || CFG.TICK));
+    camX += (tx - camX) * Math.min(1, k * 7);
     camY += (ty - camY) * Math.min(1, k * 6);
+    camAx += (ax - camAx) * Math.min(1, k * 5);
+    camAy += (ay - camAy) * Math.min(1, k * 5);
+    const held = clampCam(camX, camY, camAx, camAy, box);
+    camX = held.x; camY = held.y;
+  }
+
+  function camFraming() {
+    if (!car) return null;
+    const box = vehicleAABB();
+    const pads = camPads();
+    const left = wx(box.minX), right = wx(box.maxX);
+    const top = wy(box.maxY), bottom = wy(box.minY);
+    const mid = wx((box.minX + box.maxX) * 0.5);
+    return {
+      ppm: ppm, viewW: viewW, viewH: viewH, camAx: camAx, camAy: camAy,
+      left: left, right: right, top: top, bottom: bottom, mid: mid,
+      pads: pads,
+      clipped: left < pads.l - 0.5 || right > viewW - pads.r + 0.5 ||
+        top < pads.t - 0.5 || bottom > viewH - pads.b + 0.5
+    };
   }
 
   function drawSky() {
@@ -2040,7 +2159,8 @@
         x: p.x, y: p.y, vx: v.x, vy: v.y, gas: gasHeld, brake: brakeHeld,
         broken: brokenCount, cargoLost: cargoLost, fps: fpsNow,
         result: result, adsPaused: adsPaused, reversing: !!reversing,
-        revReady: !!revReady, revHoldT: revHoldT
+        revReady: !!revReady, revHoldT: revHoldT,
+        cam: camFraming()
       };
     },
     pressGas: function (v) { setGas(!!v); },
