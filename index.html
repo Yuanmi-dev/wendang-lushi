@@ -32,6 +32,16 @@
     box-shadow:0 1px 4px rgba(0,0,0,.12);max-width:70%;}
   #hud .title{font-weight:700;font-size:15px;line-height:1.2;}
   #hud .sub{font-size:12px;color:#5a4e40;margin-top:2px;}
+  .pedalHud{display:flex;gap:12px;margin-top:5px;font-size:11px;color:#5a4e40;align-items:flex-end;}
+  .pedalHud .ph{display:flex;align-items:flex-end;gap:5px;}
+  .pedalHud .phSegs{display:flex;gap:2px;align-items:flex-end;height:11px;}
+  .pedalHud .phSegs i{width:6px;border-radius:1px;background:#d9d0c3;display:block;}
+  .pedalHud .phSegs i:nth-child(1){height:4px;}
+  .pedalHud .phSegs i:nth-child(2){height:6px;}
+  .pedalHud .phSegs i:nth-child(3){height:8px;}
+  .pedalHud .phSegs i:nth-child(4){height:11px;}
+  .pedalHud .ph.brake .phSegs i.on{background:#a3452f;}
+  .pedalHud .ph.gas .phSegs i.on{background:#1f7a6f;}
   #btnPause{
     pointer-events:auto;border:0;border-radius:16px;padding:8px 12px;font-size:14px;
     background:rgba(251,246,238,.94);color:#2b241c;box-shadow:0 1px 4px rgba(0,0,0,.12);
@@ -45,14 +55,33 @@
   .pedal{
     flex:1;min-height:88px;max-width:46%;border:0;border-radius:22px;font-size:22px;font-weight:700;
     letter-spacing:.08em;color:#fff;box-shadow:0 3px 0 rgba(0,0,0,.18);opacity:.92;
+    position:relative;overflow:hidden;touch-action:none;
+    display:flex;align-items:center;justify-content:center;
   }
-  #btnBrake{background:#a3452f;position:relative;}
+  #btnBrake{background:#a3452f;}
   #btnGas{background:#1f7a6f;}
   .pedal:active,.pedal.held{transform:translateY(2px);box-shadow:0 1px 0 rgba(0,0,0,.18);opacity:1;}
+  .pedalFill{
+    position:absolute;left:0;right:0;bottom:0;height:0%;
+    pointer-events:none;z-index:0;
+  }
+  #btnBrake .pedalFill{background:rgba(255,220,180,.30);}
+  #btnGas .pedalFill{background:rgba(180,255,230,.32);}
+  .pedalSegs{
+    position:absolute;right:8px;top:10px;bottom:10px;width:8px;
+    display:flex;flex-direction:column-reverse;gap:3px;
+    pointer-events:none;z-index:1;
+  }
+  .pedalSegs i{
+    flex:1;border-radius:3px;background:rgba(255,255,255,.22);
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);
+  }
+  .pedalSegs i.on{background:rgba(255,255,255,.95);box-shadow:none;}
+  .pedalLabel{position:relative;z-index:1;pointer-events:none;}
   #revBadge{
     display:none;position:absolute;top:8px;left:50%;transform:translateX(-50%);
     font-size:11px;font-weight:700;letter-spacing:.18em;line-height:1;
-    background:#2b241c;color:#fbf6ee;border-radius:8px;padding:3px 7px;pointer-events:none;
+    background:#2b241c;color:#fbf6ee;border-radius:8px;padding:3px 7px;pointer-events:none;z-index:2;
   }
   #revBadge.on{display:block;}
   #hintBar{
@@ -111,14 +140,27 @@
   <div class="meta">
     <div class="title" id="hudTitle">穩當路試</div>
     <div class="sub" id="hudSub"></div>
+    <div class="pedalHud" id="hudPedals" aria-hidden="true">
+      <div class="ph brake" id="hudBrake"><span>煞車</span><span class="phSegs"><i></i><i></i><i></i><i></i></span></div>
+      <div class="ph gas" id="hudGas"><span>油門</span><span class="phSegs"><i></i><i></i><i></i><i></i></span></div>
+    </div>
   </div>
   <button type="button" id="btnPause">暫停</button>
 </div>
 <div id="hintBar"></div>
 <div id="count">3</div>
 <div id="controls">
-  <button type="button" class="pedal" id="btnBrake">煞車<span id="revBadge">倒車</span></button>
-  <button type="button" class="pedal" id="btnGas">油門</button>
+  <button type="button" class="pedal" id="btnBrake">
+    <span class="pedalFill" id="brakeFill"></span>
+    <span class="pedalSegs" id="brakeSegs" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+    <span class="pedalLabel">煞車</span>
+    <span id="revBadge">倒車</span>
+  </button>
+  <button type="button" class="pedal" id="btnGas">
+    <span class="pedalFill" id="gasFill"></span>
+    <span class="pedalSegs" id="gasSegs" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+    <span class="pedalLabel">油門</span>
+  </button>
 </div>
 
 <div class="sheet on" id="sheetMenu">
@@ -126,7 +168,7 @@
     <h1>穩當路試</h1>
     <div class="tag">每週小遊戲　第 1 週　油門與煞車的平衡課</div>
     <p>這是一輛還沒完全鎖緊的試作車。油門與煞車要細踩，衝太猛會翻車，撞擊過大時零件或貨物會掉下來。把車穩穩開到旗門即可。</p>
-    <p style="font-size:13px;color:#5a4e40;">觸控用左右兩顆按鈕；電腦可用方向鍵或 A／D，空白鍵、S、下鍵也可煞車。煞車會把車輪剎住，可停在坡上。完全停穩後再按一次，或停住後按住約 0.6 秒，才會倒車。</p>
+    <p style="font-size:13px;color:#5a4e40;">觸控用左右兩顆按鈕：點下去先是輕踩，按住約 0.6 秒加到滿力，上下滑可直接調力度。電腦可用方向鍵或 W／S、A／D，空白鍵也可煞車，同樣會逐漸加力。煞車會把車輪剎住，可停在坡上。完全停穩後再按一次，或停住後按住約 0.6 秒，才會倒車。</p>
     <div class="levels" id="levelList"></div>
   </div>
 </div>

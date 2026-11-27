@@ -19,6 +19,10 @@
     COAST_TORQUE: 1.6,     // 無輸入時的引擎煞車／滾動阻力；陡坡仍可緩緩下滑
     STOP_VX: 0.28,         // 視為停穩的水平速度
     REVERSE_HOLD_S: 0.6,   // 停穩後持續按住煞車，超過此時長才進入倒車
+    PEDAL_TOUCH: 0.25,     // 按下當下的力度
+    PEDAL_RAMP_UP: 0.6,    // 由輕踩加到滿力的時間（秒）
+    PEDAL_RAMP_DOWN: 0.1,  // 放開後收到 0 的時間（秒）
+    PEDAL_SEGS: 4,
     SPRING_HZ: 4.2,
     SPRING_ZETA: 0.72,
     BREAK_WHEEL: 280,
@@ -645,7 +649,8 @@
   }
   function updateRevState(dt) {
     if (!car) return;
-    const brake = !!car.brake, gas = !!car.gas;
+    // 以按住與否判定倒車閘門，不受放開後 0.1 秒收力影響
+    const brake = !!brakeHeld, gas = !!gasHeld;
     const vx = car.chassis.getLinearVelocity().x;
     const stopped = Math.abs(vx) <= CFG.STOP_VX;
     if (gas) {
@@ -681,18 +686,18 @@
     syncRevBadge();
   }
   function applyDrive(car) {
-    const gas = car.gas, brake = car.brake;
-    let speed = 0, torque = 0, enable = true, perWheel = false;
-    if (gas && !brake) {
-      speed = -CFG.MOTOR_SPEED;
-      perWheel = true;
-    } else if (brake && !gas && reversing) {
-      speed = CFG.MOTOR_SPEED * 0.7;
-      perWheel = true;
-    } else if (brake) {
-      // 真正的煞車：馬達速度 0、高扭力把車輪剎住
+    const gas = car.gas || 0, brake = car.brake || 0;
+    let speed = 0, torque = 0, enable = true, driveScale = 0;
+    if (gas > 0 && !(brake > 0)) {
+      speed = -CFG.MOTOR_SPEED * gas;
+      driveScale = gas;
+    } else if (brake > 0 && !(gas > 0) && reversing) {
+      speed = CFG.MOTOR_SPEED * 0.7 * brake;
+      driveScale = brake;
+    } else if (brake > 0) {
+      // 真正的煞車：馬達速度 0、高扭力把車輪剎住；扭力隨力度縮放
       speed = 0;
-      torque = CFG.BRAKE_TORQUE * (gas ? 1.05 : 1);
+      torque = CFG.BRAKE_TORQUE * brake * (gas > 0 ? 1.05 : 1);
     } else {
       // 無輸入：輕微引擎煞車，陡坡重力仍可慢慢下滑
       speed = 0;
@@ -704,7 +709,7 @@
         if (!w.joint.getBodyA) return;
         w.joint.enableMotor(enable);
         w.joint.setMotorSpeed(speed);
-        w.joint.setMaxMotorTorque(perWheel ? w.torque : torque);
+        w.joint.setMaxMotorTorque(driveScale > 0 ? w.torque * driveScale : torque);
       } catch (e) {}
     });
   }
@@ -739,6 +744,9 @@
   let st = "menu"; // menu | countdown | play | pause | result | ads
   let tRun = 0, tGoal = 0, tOver = 0, tImmune = 0, countN = 0, countT = 0;
   let gasHeld = false, brakeHeld = false;
+  let gasStrength = 0, brakeStrength = 0;
+  let gasSlideLock = false, brakeSlideLock = false;
+  let gasSegPrev = 0, brakeSegPrev = 0;
   let reversing = false, revHoldT = 0, revReady = false, brakePrev = false;
   let vfx = [];
   let camX = 0, camY = 1.2, camAx = 0.33, camAy = 0.56, result = null;
@@ -791,8 +799,12 @@
     tRun = 0; tGoal = 0; tOver = 0; tImmune = 0.9; result = null;
     camX = meta.spawn.x; camY = meta.spawn.y;
     gasHeld = false; brakeHeld = false;
+    gasStrength = 0; brakeStrength = 0;
+    gasSlideLock = false; brakeSlideLock = false;
+    gasSegPrev = 0; brakeSegPrev = 0;
     if (car) { car.gas = 0; car.brake = 0; }
     resetDriveState();
+    syncPedals();
     continueUsed = !!opts.keepContinueUsed && continueUsed;
     if (!opts.keepContinueUsed) { continueUsed = false; hideContinueBtn(); }
 
@@ -896,11 +908,14 @@
   // ---------- 逐步模擬 ----------
   function stepSim(dt) {
     if (!world || !car) return;
+    if (!botMode) updatePedalStrength(dt);
     if (st === "play") {
       tRun += dt;
-      car.gas = gasHeld ? 1 : 0;
-      car.brake = brakeHeld ? 1 : 0;
       if (botMode) applyBot();
+      else {
+        car.gas = gasStrength;
+        car.brake = brakeStrength;
+      }
       updateRevState(dt);
       applyDrive(car);
       stepVfx(dt);
@@ -976,23 +991,29 @@
     const pitch = wrapAng(car.chassis.getAngle());
     const ang = Math.abs(pitch);
     gasHeld = false; brakeHeld = false;
+    gasStrength = 0; brakeStrength = 0;
     if (ang > 2.0) { // 翻覆後不要硬給油
-      brakeHeld = Math.abs(v.x) > 1;
+      if (Math.abs(v.x) > 1) { brakeHeld = true; brakeStrength = 1; }
     } else if (pitch > 0.72) { // 翹輪：超過一般坡度才收油
-      gasHeld = false;
-      if (pitch > 1.0 && v.x > 1) brakeHeld = true;
+      if (pitch > 1.0 && v.x > 1) { brakeHeld = true; brakeStrength = 1; }
     } else if (pitch < -0.7 && v.x > 7) { // 很陡且過快才強制收速，避免淺凹槽裡翻車
+      brakeHeld = true; brakeStrength = 1;
+    } else if (err > 0.35) {
+      gasHeld = true;
+      // 誤差大時滿力，接近目標才用部分力度
+      gasStrength = Math.max(CFG.PEDAL_TOUCH, Math.min(1, (err - 0.10) / 1.0));
+    } else if (err < -0.45) {
       brakeHeld = true;
-    } else if (err > 0.35) gasHeld = true;
-    else if (err < -0.45) brakeHeld = true;
+      brakeStrength = Math.max(CFG.PEDAL_TOUCH, Math.min(1, (-err - 0.15) / 1.0));
+    }
     // 在空中略收（兩輪幾乎離地時不要猛加速）
     const wr = car.rear.body.getPosition().y, wf = car.front.body.getPosition().y;
     const gY = p.y;
     if (wr > gY - 0.15 && wf > gY - 0.15 && v.y > 1.2) {
-      if (v.x > want) { gasHeld = false; brakeHeld = false; }
+      if (v.x > want) { gasHeld = false; brakeHeld = false; gasStrength = 0; brakeStrength = 0; }
     }
-    car.gas = gasHeld ? 1 : 0;
-    car.brake = brakeHeld ? 1 : 0;
+    car.gas = gasStrength;
+    car.brake = brakeStrength;
   }
 
   // ---------- 繪製 ----------
@@ -1593,6 +1614,8 @@
     el.count.classList.add("on");
     el.count.textContent = String(countN);
     gasHeld = false; brakeHeld = false;
+    gasStrength = 0; brakeStrength = 0;
+    gasSlideLock = false; brakeSlideLock = false;
     syncPedals();
     if (opts.bot) botMode = true;
     if (AUTO_BOT) botMode = true;
@@ -1749,59 +1772,156 @@
         acc = 0;
       }
     }
+    syncPedals();
     draw();
     requestAnimationFrame(loop);
   }
 
   // ---------- 輸入 ----------
+  function pedalSegment(s) {
+    if (s <= 0.001) return 0;
+    if (s < 0.50) return 1;
+    if (s < 0.75) return 2;
+    if (s < 0.999) return 3;
+    return 4;
+  }
+  function hapticSeg(prev, next) {
+    if (next === prev || next <= 0) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(next > prev ? 12 : 8);
+    } catch (e) {}
+  }
+  function applySegDots(root, n) {
+    if (!root) return;
+    const dots = root.querySelectorAll("i");
+    for (let i = 0; i < dots.length; i++) dots[i].classList.toggle("on", i < n);
+  }
   function syncPedals() {
-    document.getElementById("btnGas").classList.toggle("held", gasHeld);
-    document.getElementById("btnBrake").classList.toggle("held", brakeHeld);
+    const gBtn = document.getElementById("btnGas");
+    const bBtn = document.getElementById("btnBrake");
+    if (gBtn) gBtn.classList.toggle("held", gasHeld || gasStrength > 0.02);
+    if (bBtn) bBtn.classList.toggle("held", brakeHeld || brakeStrength > 0.02);
+    const gFill = document.getElementById("gasFill");
+    const bFill = document.getElementById("brakeFill");
+    if (gFill) gFill.style.height = (Math.max(0, Math.min(1, gasStrength)) * 100).toFixed(1) + "%";
+    if (bFill) bFill.style.height = (Math.max(0, Math.min(1, brakeStrength)) * 100).toFixed(1) + "%";
+    const gSeg = pedalSegment(gasStrength);
+    const bSeg = pedalSegment(brakeStrength);
+    applySegDots(document.getElementById("gasSegs"), gSeg);
+    applySegDots(document.getElementById("brakeSegs"), bSeg);
+    applySegDots(document.getElementById("hudGas"), gSeg);
+    applySegDots(document.getElementById("hudBrake"), bSeg);
   }
-  function setGas(v) {
-    if (v && !gasHeld) inputAt = performance.now();
-    gasHeld = !!v; syncPedals();
-    if (st === "play" && car && !adsPaused) {
-      car.gas = gasHeld ? 1 : 0;
-      updateRevState(0);
-      applyDrive(car);
-      if (v) motorAt = performance.now();
+  function stepOnePedal(cur, held, slideLock, dt) {
+    if (held) {
+      if (slideLock) return cur;
+      if (cur < CFG.PEDAL_TOUCH) return CFG.PEDAL_TOUCH;
+      const rate = (1 - CFG.PEDAL_TOUCH) / CFG.PEDAL_RAMP_UP;
+      return Math.min(1, cur + rate * dt);
+    }
+    if (cur <= 0) return 0;
+    return Math.max(0, cur - (1 / CFG.PEDAL_RAMP_DOWN) * dt);
+  }
+  function noteSegChange(kind, next) {
+    const held = kind === "gas" ? gasHeld : brakeHeld;
+    if (kind === "gas") {
+      if (held) hapticSeg(gasSegPrev, next);
+      gasSegPrev = next;
+    } else {
+      if (held) hapticSeg(brakeSegPrev, next);
+      brakeSegPrev = next;
     }
   }
-  function setBrake(v) {
-    if (v && !brakeHeld) inputAt = performance.now();
-    brakeHeld = !!v; syncPedals();
-    if (st === "play" && car && !adsPaused) {
-      car.brake = brakeHeld ? 1 : 0;
+  function updatePedalStrength(dt) {
+    const g0 = gasStrength, b0 = brakeStrength;
+    gasStrength = stepOnePedal(gasStrength, gasHeld, gasSlideLock, dt);
+    brakeStrength = stepOnePedal(brakeStrength, brakeHeld, brakeSlideLock, dt);
+    if (gasStrength !== g0) noteSegChange("gas", pedalSegment(gasStrength));
+    if (brakeStrength !== b0) noteSegChange("brake", pedalSegment(brakeStrength));
+  }
+  function setPedal(kind, on, opts) {
+    opts = opts || {};
+    const isGas = kind === "gas";
+    const held = isGas ? gasHeld : brakeHeld;
+    if (on && !held) {
+      inputAt = performance.now();
+      if (isGas) { gasStrength = CFG.PEDAL_TOUCH; gasSlideLock = false; }
+      else { brakeStrength = CFG.PEDAL_TOUCH; brakeSlideLock = false; }
+      noteSegChange(kind, pedalSegment(CFG.PEDAL_TOUCH));
+    }
+    if (on && opts.slide) {
+      const s = Math.max(0, Math.min(1, +opts.strength));
+      if (isGas) { gasStrength = s; gasSlideLock = true; }
+      else { brakeStrength = s; brakeSlideLock = true; }
+      noteSegChange(kind, pedalSegment(s));
+    }
+    if (!on) {
+      if (isGas) gasSlideLock = false;
+      else brakeSlideLock = false;
+    }
+    if (isGas) gasHeld = !!on;
+    else brakeHeld = !!on;
+    syncPedals();
+    if (st === "play" && car && !adsPaused && !botMode) {
+      car.gas = gasStrength;
+      car.brake = brakeStrength;
       updateRevState(0);
       applyDrive(car);
-      if (v) motorAt = performance.now();
+      if (on) motorAt = performance.now();
     }
   }
+  function setGas(v) { setPedal("gas", !!v); }
+  function setBrake(v) { setPedal("brake", !!v); }
 
-  function bindPedal(btn, setter) {
-    const down = function (ev) { ev.preventDefault(); ev.stopPropagation(); setter(true); };
-    const up = function (ev) { ev.preventDefault(); ev.stopPropagation(); setter(false); };
-    btn.addEventListener("pointerdown", down);
-    btn.addEventListener("pointerup", up);
-    btn.addEventListener("pointercancel", up);
-    btn.addEventListener("pointerleave", function (ev) {
-      if (ev.buttons) return;
-      setter(false);
+  function bindPedal(btn, kind) {
+    let pid = null, startY = 0, slid = false;
+    function travel() {
+      const h = btn.getBoundingClientRect().height;
+      return Math.max(72, h);
+    }
+    function applySlide(ev) {
+      const dy = startY - ev.clientY; // 上滑加力、下滑減力
+      if (!slid && Math.abs(dy) < 8) return;
+      slid = true;
+      const s = Math.max(0, Math.min(1, CFG.PEDAL_TOUCH + dy / travel() * (1 - CFG.PEDAL_TOUCH)));
+      setPedal(kind, true, { slide: true, strength: s });
+    }
+    btn.addEventListener("pointerdown", function (ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      pid = ev.pointerId;
+      startY = ev.clientY;
+      slid = false;
+      try { btn.setPointerCapture(ev.pointerId); } catch (e) {}
+      setPedal(kind, true);
     });
+    btn.addEventListener("pointermove", function (ev) {
+      if (pid == null || ev.pointerId !== pid) return;
+      ev.preventDefault();
+      applySlide(ev);
+    });
+    function release(ev) {
+      if (pid == null || (ev && ev.pointerId !== pid)) return;
+      if (ev) ev.preventDefault();
+      try { btn.releasePointerCapture(pid); } catch (e) {}
+      pid = null;
+      slid = false;
+      setPedal(kind, false);
+    }
+    btn.addEventListener("pointerup", release);
+    btn.addEventListener("pointercancel", release);
   }
-  bindPedal(document.getElementById("btnGas"), setGas);
-  bindPedal(document.getElementById("btnBrake"), setBrake);
+  bindPedal(document.getElementById("btnGas"), "gas");
+  bindPedal(document.getElementById("btnBrake"), "brake");
 
   window.addEventListener("keydown", function (ev) {
     if (ev.target && ev.target.closest && ev.target.closest("button, input, #adFake")) return;
     if (ev.repeat) return;
-    if (ev.code === "ArrowRight" || ev.code === "KeyD" || ev.code === "ArrowUp") { ev.preventDefault(); setGas(true); }
+    if (ev.code === "ArrowRight" || ev.code === "KeyD" || ev.code === "ArrowUp" || ev.code === "KeyW") { ev.preventDefault(); setGas(true); }
     if (ev.code === "ArrowLeft" || ev.code === "KeyA" || ev.code === "ArrowDown" || ev.code === "KeyS" || ev.code === "Space") { ev.preventDefault(); setBrake(true); }
     if (ev.code === "Escape") { ev.preventDefault(); if (st === "play") showPause(); }
   });
   window.addEventListener("keyup", function (ev) {
-    if (ev.code === "ArrowRight" || ev.code === "KeyD" || ev.code === "ArrowUp") setGas(false);
+    if (ev.code === "ArrowRight" || ev.code === "KeyD" || ev.code === "ArrowUp" || ev.code === "KeyW") setGas(false);
     if (ev.code === "ArrowLeft" || ev.code === "KeyA" || ev.code === "ArrowDown" || ev.code === "KeyS" || ev.code === "Space") setBrake(false);
   });
   window.addEventListener("contextmenu", function (ev) { ev.preventDefault(); });
@@ -1823,7 +1943,7 @@
   function beatLevel(id, opts) {
     opts = opts || {};
     const L = levelById(id);
-    const saved = { st: st, botMode: botMode, gasHeld: gasHeld, brakeHeld: brakeHeld };
+    const saved = { st: st, botMode: botMode, gasHeld: gasHeld, brakeHeld: brakeHeld, gasStrength: gasStrength, brakeStrength: brakeStrength };
     setupLevel(id, {});
     botMode = true;
     st = "play";
@@ -1848,6 +1968,8 @@
     };
     // 恢復選單狀態，避免檢查污染畫面
     botMode = saved.botMode;
+    gasHeld = saved.gasHeld; brakeHeld = saved.brakeHeld;
+    gasStrength = saved.gasStrength; brakeStrength = saved.brakeStrength;
     st = "menu";
     destroyWorld();
     return out;
@@ -1879,7 +2001,7 @@
         if (i % 15 === 0 || st === "result") {
           const p = car.chassis.getPosition();
           const v = car.chassis.getLinearVelocity();
-          samples.push({ t: tRun, x: p.x, y: p.y, vx: v.x, vy: v.y, ang: car.chassis.getAngle(), gas: gasHeld, brake: brakeHeld, st: st, broken: brokenCount });
+          samples.push({ t: tRun, x: p.x, y: p.y, vx: v.x, vy: v.y, ang: car.chassis.getAngle(), gas: gasHeld, brake: brakeHeld, gasStrength: gasStrength, brakeStrength: brakeStrength, st: st, broken: brokenCount });
         }
         if (st === "result") break;
       }
@@ -1896,14 +2018,22 @@
       return {
         st: st, tRun: tRun, level: level && level.id, name: level && level.name,
         x: p.x, y: p.y, vx: v.x, vy: v.y, gas: gasHeld, brake: brakeHeld,
+        gasStrength: gasStrength, brakeStrength: brakeStrength,
+        gasSeg: pedalSegment(gasStrength), brakeSeg: pedalSegment(brakeStrength),
         broken: brokenCount, cargoLost: cargoLost, fps: fpsNow,
         result: result, adsPaused: adsPaused, reversing: !!reversing,
         revReady: !!revReady, revHoldT: revHoldT,
         cam: camFraming()
       };
     },
-    pressGas: function (v) { setGas(!!v); },
-    pressBrake: function (v) { setBrake(!!v); },
+    pressGas: function (v, s) {
+      if (s != null) setPedal("gas", !!v, { slide: true, strength: +s });
+      else setGas(!!v);
+    },
+    pressBrake: function (v, s) {
+      if (s != null) setPedal("brake", !!v, { slide: true, strength: +s });
+      else setBrake(!!v);
+    },
     endRun: function (ok, reason) {
       finishRun(!!ok, reason || (ok ? "穩當到達" : "測試結束"));
     },
