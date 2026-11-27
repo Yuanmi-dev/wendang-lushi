@@ -490,7 +490,7 @@
       id: 11, name: "連串蹺板", hint: "連續蹺板像走路，一張一張過，不要加速衝。",
       par3: 20, par2: 30, cargo: false,
       bot: [
-        { x: 0, v: 3.8 }, { x: 10, v: 3.4 }, { x: 20, v: 3.3 }, { x: 32, v: 3.4 },
+        { x: 0, v: 3.8 }, { x: 10, v: 3.4 }, { x: 20, v: 4.4 }, { x: 26, v: 4.2 }, { x: 32, v: 3.6 },
         { x: 44, v: 3.3 }, { x: 56, v: 3.6 }, { x: 66, v: 5.0 }, { x: 76, v: 2 }
       ],
       build: function (b) {
@@ -524,9 +524,10 @@
   }
 
   function createCar(world, x, y, withCargo) {
+    // 較低的斜背：頂峰約在車身中段 y=0.56，向短車尾甲板收低（凸多邊形）
     const chassisVerts = [
       { x: -1.15, y: -0.28 }, { x: 1.25, y: -0.28 }, { x: 1.32, y: 0.08 },
-      { x: 0.35, y: 0.22 }, { x: -0.15, y: 0.72 }, { x: -0.95, y: 0.72 }, { x: -1.22, y: 0.12 }
+      { x: 0.12, y: 0.50 }, { x: -0.15, y: 0.56 }, { x: -0.90, y: 0.40 }, { x: -1.22, y: 0.14 }
     ];
     const chassis = world.createBody({ type: "dynamic", position: { x: x, y: y }, angularDamping: 0.15 });
     const fxC = chassis.createFixture({
@@ -542,9 +543,9 @@
     fxB.setUserData({ kind: "ballast", color: palette.teal });
 
     // 可掉落的車頂殼
-    const roof = world.createBody({ type: "dynamic", position: { x: x - 0.45, y: y + 0.78 } });
+    const roof = world.createBody({ type: "dynamic", position: { x: x - 0.22, y: y + 0.575 } });
     const fxR = roof.createFixture({
-      shape: new pl.Box(0.46, 0.08),
+      shape: new pl.Box(0.40, 0.055),
       density: 0.25, friction: 0.3, filter: filterCar()
     });
     fxR.setUserData({ kind: "roof", color: palette.roof });
@@ -974,7 +975,7 @@
     if (car && car.chassis) {
       // 含牛欄、排氣管與車頂的外輪廓，再留一點餘裕
       const corners = [
-        [-1.42, -0.35], [1.50, -0.35], [1.50, 0.95], [-1.42, 0.95]
+        [-1.42, -0.35], [1.50, -0.35], [1.50, 0.70], [-1.42, 0.70]
       ];
       for (let i = 0; i < corners.length; i++) addLocal(car.chassis, corners[i][0], corners[i][1]);
     }
@@ -986,7 +987,7 @@
     });
     if (car.roof) {
       const p = car.roof.getPosition();
-      add(p.x - 0.58, p.y - 0.16); add(p.x + 0.58, p.y + 0.20);
+      add(p.x - 0.48, p.y - 0.12); add(p.x + 0.48, p.y + 0.14);
     }
     if (car.cargo) {
       car.cargo.forEach(function (c) {
@@ -1223,13 +1224,13 @@
         ctx.beginPath();
         ctx.moveTo(-1.16, -0.30);
         ctx.quadraticCurveTo(-1.36, -0.26, -1.34, -0.06);
-        ctx.quadraticCurveTo(-1.32, 0.16, -1.20, 0.28);
-        ctx.quadraticCurveTo(-1.28, 0.40, -1.14, 0.46);
-        ctx.lineTo(-1.02, 0.48);
-        ctx.quadraticCurveTo(-0.88, 0.62, -0.52, 0.78);
-        ctx.quadraticCurveTo(-0.32, 0.86, -0.08, 0.80);
-        ctx.quadraticCurveTo(0.10, 0.66, 0.18, 0.56);
-        ctx.quadraticCurveTo(0.30, 0.32, 0.36, 0.16);
+        ctx.quadraticCurveTo(-1.32, 0.14, -1.24, 0.20);
+        // 斜背落到接近肩線的短甲板，末端只帶一小段唇翼
+        ctx.quadraticCurveTo(-1.28, 0.26, -1.20, 0.28);
+        ctx.quadraticCurveTo(-1.14, 0.25, -1.00, 0.24);
+        ctx.quadraticCurveTo(-0.52, 0.47, -0.16, 0.54);
+        ctx.quadraticCurveTo(-0.02, 0.54, 0.10, 0.49);
+        ctx.quadraticCurveTo(0.26, 0.32, 0.36, 0.16);
         ctx.quadraticCurveTo(0.95, 0.10, 1.24, 0.06);
         ctx.quadraticCurveTo(1.42, 0.04, 1.46, -0.06);
         ctx.quadraticCurveTo(1.50, -0.16, 1.40, -0.30);
@@ -1253,7 +1254,7 @@
       ctx.fill();
 
       bodyPath();
-      const g = ctx.createLinearGradient(0, -0.32, 0, 0.84);
+      const g = ctx.createLinearGradient(0, -0.32, 0, 0.60);
       g.addColorStop(0, "#145a96");
       g.addColorStop(0.22, "#1a78c4");
       g.addColorStop(0.52, "#2a92dc");
@@ -1435,19 +1436,6 @@
       ctx.strokeStyle = "#0c3a68";
       ctx.lineWidth = 0.02;
       ctx.stroke();
-      // 小尾翼
-      ctx.beginPath();
-      ctx.moveTo(-1.04, 0.44);
-      ctx.lineTo(-1.24, 0.45);
-      ctx.lineTo(-1.22, 0.50);
-      ctx.lineTo(-1.00, 0.48);
-      ctx.closePath();
-      ctx.fillStyle = "#1a78c4";
-      ctx.fill();
-      ctx.strokeStyle = "#0c3a68";
-      ctx.lineWidth = 0.016;
-      ctx.stroke();
-
       ctx.beginPath();
       ctx.roundRect(-1.32, 0.04, 0.14, 0.15, 0.035);
       ctx.fillStyle = "#3a1014";
@@ -1476,51 +1464,53 @@
       tip(-1.34, -0.18, 0.75);
       tip(-1.34, -0.23, 0.75);
 
-      // 斜背側窗
+      // 兩扇側窗：前門窗＋小後角窗，細深色窗框；不畫駕駛頭
+      const glass = ctx.createLinearGradient(0, 0.20, 0, 0.56);
+      glass.addColorStop(0, "rgba(20, 42, 64, 0.94)");
+      glass.addColorStop(0.55, "rgba(60, 110, 140, 0.80)");
+      glass.addColorStop(1, "rgba(180, 215, 230, 0.70)");
+      function strokeWin() {
+        ctx.fillStyle = glass;
+        ctx.fill();
+        ctx.strokeStyle = "#12151c";
+        ctx.lineWidth = 0.028;
+        ctx.stroke();
+      }
+      // 前門窗（長前擋）
       ctx.beginPath();
-      ctx.moveTo(0.16, 0.22);
-      ctx.lineTo(-0.04, 0.62);
-      ctx.quadraticCurveTo(-0.30, 0.74, -0.62, 0.70);
-      ctx.lineTo(-0.90, 0.56);
-      ctx.lineTo(-0.98, 0.38);
-      ctx.lineTo(-0.88, 0.26);
-      ctx.lineTo(-0.74, 0.22);
+      ctx.moveTo(0.22, 0.22);
+      ctx.lineTo(0.06, 0.46);
+      ctx.quadraticCurveTo(-0.06, 0.50, -0.22, 0.50);
+      ctx.lineTo(-0.28, 0.22);
       ctx.closePath();
-      const wg = ctx.createLinearGradient(-0.3, 0.20, -0.3, 0.74);
-      wg.addColorStop(0, "rgba(20, 42, 64, 0.94)");
-      wg.addColorStop(0.55, "rgba(60, 110, 140, 0.80)");
-      wg.addColorStop(1, "rgba(180, 215, 230, 0.70)");
-      ctx.fillStyle = wg;
-      ctx.fill();
-      ctx.strokeStyle = "#12151c";
-      ctx.lineWidth = 0.042;
-      ctx.stroke();
+      strokeWin();
       ctx.beginPath();
-      ctx.moveTo(0.10, 0.28);
-      ctx.lineTo(-0.06, 0.58);
-      ctx.quadraticCurveTo(-0.30, 0.70, -0.58, 0.66);
-      ctx.lineTo(-0.86, 0.54);
+      ctx.moveTo(0.16, 0.28);
+      ctx.lineTo(0.04, 0.44);
+      ctx.quadraticCurveTo(-0.06, 0.47, -0.20, 0.47);
       ctx.strokeStyle = "rgba(220,235,245,0.4)";
-      ctx.lineWidth = 0.014;
+      ctx.lineWidth = 0.012;
       ctx.stroke();
+      // 較小的後角窗，隨斜背收尖
       ctx.beginPath();
-      ctx.moveTo(-0.28, 0.24);
-      ctx.lineTo(-0.22, 0.66);
-      ctx.strokeStyle = "rgba(18, 24, 32, 0.55)";
-      ctx.lineWidth = 0.028;
-      ctx.stroke();
+      ctx.moveTo(-0.36, 0.22);
+      ctx.lineTo(-0.34, 0.48);
+      ctx.quadraticCurveTo(-0.52, 0.44, -0.70, 0.32);
+      ctx.lineTo(-0.68, 0.22);
+      ctx.closePath();
+      strokeWin();
+      // 隱約座椅，沒有頭的色塊
+      ctx.beginPath();
+      ctx.moveTo(-0.08, 0.24);
+      ctx.quadraticCurveTo(-0.06, 0.40, -0.14, 0.46);
+      ctx.lineTo(-0.22, 0.44);
+      ctx.quadraticCurveTo(-0.16, 0.32, -0.18, 0.24);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(18, 28, 40, 0.28)";
+      ctx.fill();
 
       ctx.beginPath();
-      ctx.arc(-0.44, 0.40, 0.07, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(28, 22, 20, 0.65)";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(-0.44, 0.30, 0.09, 0.05, 0, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(20, 28, 40, 0.6)";
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.roundRect(0.20, 0.22, 0.12, 0.065, 0.018);
+      ctx.roundRect(0.18, 0.20, 0.12, 0.06, 0.016);
       ctx.fillStyle = "#12151c";
       ctx.fill();
       ctx.beginPath();
@@ -1532,28 +1522,24 @@
 
   function drawRoofPanel() {
     if (!car || !car.roof) return;
+    // 完好時車頂已畫在車身上，不再疊一塊突出蓋；只在斷開後畫飛出的薄片
+    const item = (car.breakables || []).find(function (it) { return it.kind === "roof"; });
+    if (item && !item.broken) return;
     inBody(car.roof, function () {
-      // 薄片貼齊車頂，避免看起來像車頂行李架
       ctx.beginPath();
-      ctx.moveTo(-0.42, -0.09);
-      ctx.quadraticCurveTo(-0.10, -0.01, 0.20, -0.03);
-      ctx.quadraticCurveTo(0.38, -0.06, 0.42, -0.09);
-      ctx.quadraticCurveTo(0.10, -0.12, -0.16, -0.12);
-      ctx.quadraticCurveTo(-0.34, -0.11, -0.42, -0.09);
+      ctx.moveTo(-0.38, -0.04);
+      ctx.quadraticCurveTo(-0.08, 0.04, 0.28, 0.00);
+      ctx.quadraticCurveTo(0.36, -0.03, 0.38, -0.05);
+      ctx.quadraticCurveTo(0.08, -0.07, -0.16, -0.07);
+      ctx.quadraticCurveTo(-0.32, -0.06, -0.38, -0.04);
       ctx.closePath();
-      const g = ctx.createLinearGradient(0, -0.12, 0, 0.00);
+      const g = ctx.createLinearGradient(0, -0.07, 0, 0.04);
       g.addColorStop(0, "#1a78c4");
-      g.addColorStop(0.6, "#2a92dc");
-      g.addColorStop(1, "#5eb4ee");
+      g.addColorStop(0.55, "#2a92dc");
+      g.addColorStop(1, "#6eb8ec");
       ctx.fillStyle = g;
       ctx.fill();
-      ctx.strokeStyle = "rgba(12,58,104,0.35)";
-      ctx.lineWidth = 0.012;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(-0.28, -0.02);
-      ctx.quadraticCurveTo(0.00, 0.02, 0.24, -0.03);
-      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.strokeStyle = "rgba(12,58,104,0.45)";
       ctx.lineWidth = 0.012;
       ctx.stroke();
     });
