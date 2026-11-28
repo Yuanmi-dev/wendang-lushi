@@ -39,6 +39,16 @@
     backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
   #hud .title{font-weight:700;font-size:15px;line-height:1.2;}
   #hud .sub{font-size:12px;color:#5a4e40;margin-top:2px;}
+  .dmgHud{margin-top:6px;}
+  .dmgRow{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:#5a4e40;}
+  .dmgBar{margin-top:3px;height:4px;border-radius:2px;background:#e4d9cb;overflow:hidden;}
+  .dmgBar i{display:block;height:100%;width:0;border-radius:2px;background:#3aa89b;transition:width .2s linear,background-color .2s linear;}
+  .dmgPips{display:flex;gap:3px;flex-shrink:0;}
+  .dmgPips i{width:7px;height:7px;border-radius:50%;background:#d9d0c3;box-shadow:0 0 0 1px rgba(43,36,28,.08) inset;display:block;}
+  .dmgPips i.light{background:#e2c36a;}
+  .dmgPips i.dent{background:#d0893a;}
+  .dmgPips i.heavy{background:#c45c36;}
+  .dmgPips i.crit{background:#8a2414;}
   .pedalHud{display:flex;gap:12px;margin-top:5px;font-size:11px;color:#5a4e40;align-items:flex-end;}
   .pedalHud .ph{display:flex;align-items:flex-end;gap:5px;}
   .pedalHud .phSegs{display:flex;gap:2px;align-items:flex-end;height:11px;}
@@ -157,6 +167,13 @@
   <div class="meta">
     <div class="title" id="hudTitle">穩當路試</div>
     <div class="sub" id="hudSub"></div>
+    <div class="dmgHud" id="hudDmg" hidden>
+      <div class="dmgRow">
+        <span>車況　<span id="hudDmgText">完好</span></span>
+        <span class="dmgPips" id="hudDmgPips" aria-hidden="true"><i data-z="front"></i><i data-z="rear"></i><i data-z="roof"></i><i data-z="side"></i><i data-z="wheelF"></i><i data-z="wheelR"></i></span>
+      </div>
+      <div class="dmgBar"><i id="hudDmgBar"></i></div>
+    </div>
     <div class="pedalHud" id="hudPedals" aria-hidden="true">
       <div class="ph brake" id="hudBrake"><span>煞車</span><span class="phSegs"><i></i><i></i><i></i><i></i></span></div>
       <div class="ph gas" id="hudGas"><span>油門</span><span class="phSegs"><i></i><i></i><i></i><i></i></span></div>

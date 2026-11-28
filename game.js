@@ -31,6 +31,15 @@
     BREAK_CARGO: 55,
     BREAK_CARGO_IMPACT: 12, // 陶罐與車斗／地面的撞擊衝量，超過則碎
     CARGO_FAIL_DELAY: 0.4, // 摔破／掉出後稍等再結算，讓破碎動畫看得到
+    DMG_I0: 18,            // 低於此的衝量不算傷（腳本最大約 10；終點牆約 37 會留刮痕）
+    DMG_ISPAN: 36,
+    DMG_COOL: 0.12,
+    DMG_LIGHT: 0.25,
+    DMG_DENT: 0.50,
+    DMG_HEAVY: 0.75,
+    DMG_CRIT: 0.92,
+    WRECK_FAIL_DELAY: 0.55,
+    WRECK_OVERALL: 0.92,
     BREAK_PLANK: 55,
     KILL_Y: -8,
     GOAL_HOLD: 0.45,
@@ -268,8 +277,16 @@
     if (!audio.engGain || !audio.engNode) return;
     const t = audio.ctx.currentTime;
     const on = playing && strength > 0.02 && !audioMuted();
-    const vol = on ? (0.08 + 0.55 * strength) : 0;
-    const rate = 0.78 + 0.55 * Math.max(0, strength);
+    let vol = on ? (0.08 + 0.55 * strength) : 0;
+    let rate = 0.78 + 0.55 * Math.max(0, strength);
+    const engDmg = (car && car.dmg) ? car.dmg.engine : 0;
+    if (on && engDmg > 0.55) {
+      const pulse = Math.sin(t * 37 + Math.sin(t * 11) * 3);
+      const misfire = pulse > (0.42 - (engDmg - 0.55) * 0.6);
+      const k = (engDmg - 0.55) / 0.45;
+      vol *= misfire ? (0.08 + 0.12 * (1 - k)) : (0.9 - 0.35 * k);
+      rate *= misfire ? 0.72 : (0.92 - 0.12 * k);
+    }
     try {
       audio.engGain.gain.setTargetAtTime(vol, t, 0.06);
       audio.engNode.playbackRate.setTargetAtTime(rate, t, 0.08);
@@ -841,9 +858,551 @@
 
     return {
       chassis: chassis, roof: roof, rear: rear, front: front, cargo: cargo, bed: bed, breakables: breakables,
-      gas: 0, brake: 0
+      gas: 0, brake: 0, dmg: freshDamage()
     };
   }
+
+  // ---------- 車損（見 docs/damage-design.md） ----------
+  function freshDamage() {
+    return {
+      front: 0, rear: 0, roof: 0, side: 0,
+      wheelF: 0, wheelR: 0, suspF: 0, suspR: 0, engine: 0,
+      bumperOff: false, wrecked: false,
+      cool: {}, wantBumper: false, bumperBody: null,
+      lastSmoke: 0, lastSpark: 0, lastCrunch: 0, maxImp: 0
+    };
+  }
+  function resetDamage() {
+    wreckFailT = 0; wreckReason = "";
+    dmgBodyCache = null; dmgBodyKey = "";
+    dmgWheelCache = { F: null, R: null };
+    dmgWheelKey = { F: "", R: "" };
+    if (car) car.dmg = freshDamage();
+  }
+  function dmgStageOf(v) {
+    if (v >= CFG.DMG_CRIT) return "crit";
+    if (v >= CFG.DMG_HEAVY) return "heavy";
+    if (v >= CFG.DMG_DENT) return "dent";
+    if (v >= CFG.DMG_LIGHT) return "light";
+    return "";
+  }
+  function dmgLabel(overall, wrecked) {
+    if (wrecked) return "報廢";
+    if (overall >= CFG.DMG_CRIT) return "嚴重";
+    if (overall >= CFG.DMG_HEAVY) return "受損";
+    if (overall >= CFG.DMG_DENT) return "凹陷";
+    if (overall >= CFG.DMG_LIGHT) return "輕微";
+    return "完好";
+  }
+  function wheelsOffCount() {
+    if (!car) return 0;
+    return ((car.front && !car.front.joint) ? 1 : 0) + ((car.rear && !car.rear.joint) ? 1 : 0);
+  }
+  function dmgOverall() {
+    const d = car && car.dmg;
+    if (!d) return 0;
+    const w = d.front * 1.1 + d.rear * 0.7 + d.roof * 0.8 + d.side * 0.7
+      + d.wheelF * 0.9 + d.wheelR * 0.9 + d.engine * 1.2
+      + Math.max(d.suspF, d.suspR) * 0.4;
+    let o = w / 7.4;
+    if (d.bumperOff) o = Math.max(o, 0.62) + 0.08;
+    if (typeof roofBroken === "function" && roofBroken()) o += 0.08;
+    const off = wheelsOffCount();
+    if (off) o += 0.12 * off;
+    return Math.min(1, o);
+  }
+  function dmgSnapshot() {
+    const d = car && car.dmg;
+    if (!d) return null;
+    return {
+      front: d.front, rear: d.rear, roof: d.roof, side: d.side,
+      wheelF: d.wheelF, wheelR: d.wheelR, suspF: d.suspF, suspR: d.suspR,
+      engine: d.engine, bumperOff: !!d.bumperOff, wrecked: !!d.wrecked,
+      overall: dmgOverall(), maxImp: d.maxImp || 0, label: dmgLabel(dmgOverall(), d.wrecked || !!wreckReason)
+    };
+  }
+  function otherIsTerrain(ud) {
+    if (!ud) return false;
+    const k = ud.kind;
+    return k === "ground" || k === "seesaw" || k === "bridge" || k === "plank"
+      || k === "crate" || k === "wall" || k === "endwall";
+  }
+  function contactWorldPoint(contact) {
+    try {
+      if (typeof contact.getWorldManifold === "function") {
+        const wm = contact.getWorldManifold();
+        if (wm && wm.points && wm.points.length) return wm.points[0];
+      }
+    } catch (e) {}
+    return null;
+  }
+  function identifyWheel(body) {
+    if (!car) return "";
+    if (car.front && car.front.body === body) return "F";
+    if (car.rear && car.rear.body === body) return "R";
+    return "";
+  }
+  function addZoneDamage(zone, amount, t) {
+    if (!car || !car.dmg || amount <= 0 || !zone) return;
+    const d = car.dmg;
+    const last = d.cool[zone] || -99;
+    if (t - last < CFG.DMG_COOL && amount < 0.2) return;
+    d.cool[zone] = t;
+    d[zone] = Math.min(1, (d[zone] || 0) + amount);
+  }
+  function noteCarImpact(contact, im) {
+    if (!car || !car.dmg || tImmune > 0 || st !== "play") return;
+    if (!(im > 0)) return;
+    const fa = contact.getFixtureA();
+    const fb = contact.getFixtureB();
+    const ua = fa && fa.getUserData && fa.getUserData();
+    const ub = fb && fb.getUserData && fb.getUserData();
+    const ka = ua && ua.kind, kb = ub && ub.kind;
+    const carKinds = { chassis: 1, ballast: 1, roof: 1, wheel: 1 };
+    let carFx = null, carUd = null;
+    if (carKinds[ka] && otherIsTerrain(ub)) { carFx = fa; carUd = ua; }
+    else if (carKinds[kb] && otherIsTerrain(ua)) { carFx = fb; carUd = ub; }
+    else return;
+    const carBody = carFx.getBody();
+    const wp = contactWorldPoint(contact) || carBody.getPosition();
+    const lp = car.chassis.getLocalPoint(wp);
+    if (im > car.dmg.maxImp) car.dmg.maxImp = im;
+    let zone = "";
+    if (carUd.kind === "wheel") {
+      const side = identifyWheel(carBody);
+      if (!side) return;
+      zone = "wheel" + side;
+    } else if (carUd.kind === "roof") {
+      zone = "roof";
+    } else if (lp.x > 0.9) zone = "front";
+    else if (lp.x < -0.9) zone = "rear";
+    else if (lp.y > 0.35) zone = "roof";
+    else zone = "side";
+    const over = im - CFG.DMG_I0;
+    if (over <= 0) return;
+    const amount = Math.pow(Math.min(1, over / CFG.DMG_ISPAN), 1.2) * 0.69;
+    addZoneDamage(zone, amount, tRun);
+    if (zone === "front" && amount > 0.08) addZoneDamage("engine", amount * 0.4, tRun);
+    if (zone === "side") addZoneDamage(lp.x > 0 ? "suspF" : "suspR", amount * 0.25, tRun);
+    if (zone === "wheelF") addZoneDamage("suspF", amount * 0.35, tRun);
+    if (zone === "wheelR") addZoneDamage("suspR", amount * 0.35, tRun);
+    if (zone === "front" && (car.dmg.front >= CFG.DMG_CRIT || im > 90) && !car.dmg.bumperOff) {
+      car.dmg.wantBumper = true;
+    }
+    if (!botMode && amount > 0.18 && tRun - (car.dmg.lastCrunch || 0) > 0.4) {
+      car.dmg.lastCrunch = tRun;
+      playSfx("crash", { vol: Math.min(0.7, 0.22 + amount * 0.6) });
+    }
+    checkWreck();
+  }
+  function syncBreakDamage() {
+    if (!car || !car.dmg) return;
+    const list = car.breakables || [];
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      if (!it.broken) continue;
+      if (it.kind === "roof") car.dmg.roof = Math.max(car.dmg.roof, 1);
+      if (it.kind === "wheel") {
+        if (it.wheel === car.front || (car.front && it.body === car.front.body)) car.dmg.wheelF = 1;
+        else car.dmg.wheelR = 1;
+      }
+    }
+  }
+  function checkWreck() {
+    if (!car || !car.dmg || car.dmg.wrecked || tImmune > 0) return;
+    const d = car.dmg;
+    const off = wheelsOffCount();
+    const overall = dmgOverall();
+    const critWheel = (d.wheelF >= CFG.DMG_CRIT ? 1 : 0) + (d.wheelR >= CFG.DMG_CRIT ? 1 : 0);
+    if (overall >= CFG.WRECK_OVERALL || off >= 2 || (d.bumperOff && d.engine >= CFG.DMG_CRIT && (off >= 1 || critWheel >= 1))) {
+      d.wrecked = true;
+    }
+  }
+  function armWreckFail() {
+    if (wreckReason || cargoFailReason) return;
+    wreckReason = "車子報廢了";
+    wreckFailT = CFG.WRECK_FAIL_DELAY;
+    addShake(0.45);
+    if (!botMode) playSfx("crash");
+  }
+  function applyPendingBumper() {
+    if (!world || !car || !car.dmg || !car.dmg.wantBumper || car.dmg.bumperOff) return;
+    car.dmg.wantBumper = false;
+    car.dmg.bumperOff = true;
+    car.dmg.front = Math.max(car.dmg.front, 1);
+    const ch = car.chassis;
+    const wp = ch.getWorldPoint({ x: 1.42, y: -0.18 });
+    const body = world.createBody({
+      type: "dynamic",
+      position: wp,
+      angle: ch.getAngle(),
+      angularDamping: 0.2,
+      linearDamping: 0.05
+    });
+    const fx = body.createFixture({
+      shape: new pl.Box(0.22, 0.08),
+      density: 0.45, friction: 0.5, restitution: 0.12,
+      filter: { groupIndex: 0, categoryBits: CAT.PROP, maskBits: CAT.GROUND | CAT.PROP }
+    });
+    fx.setUserData({ kind: "bumper" });
+    const v = ch.getLinearVelocity();
+    const off = ch.getWorldVector({ x: 0.8, y: -0.4 });
+    body.setLinearVelocity({ x: v.x + off.x, y: v.y + off.y });
+    body.setAngularVelocity(ch.getAngularVelocity() + 2.2);
+    car.dmg.bumperBody = body;
+    brokenCount += 1;
+    spawnDebris(1);
+    if (!botMode) playSfx("crash");
+    dmgBodyKey = "";
+  }
+  function setWheelFriction(w, dmg) {
+    if (!w || !w.body) return;
+    const base = 1.05;
+    const f = dmg > 0.6 ? base * (1 - 0.55 * Math.min(1, (dmg - 0.6) / 0.4)) : base;
+    for (let fx = w.body.getFixtureList(); fx; fx = fx.getNext()) {
+      if (fx.setFriction) fx.setFriction(f);
+    }
+  }
+  function applyDamageHandling() {
+    if (!car || !car.dmg || !car.chassis) return;
+    const d = car.dmg;
+    const pull = (d.suspF || 0) - (d.suspR || 0);
+    if (Math.abs(pull) > 0.55) {
+      const k = Math.min(1, (Math.abs(pull) - 0.55) / 0.45);
+      car.chassis.applyTorque((pull > 0 ? 1 : -1) * k * 2.4);
+    }
+    setWheelFriction(car.front, d.wheelF);
+    setWheelFriction(car.rear, d.wheelR);
+  }
+  function spawnDamageSmoke(heavy) {
+    if (!car || !car.chassis) return;
+    const n = fxIsLow() ? 1 : (heavy ? 3 : 2);
+    const vel = car.chassis.getLinearVelocity();
+    for (let i = 0; i < n; i++) {
+      const src = car.chassis.getWorldPoint({ x: 0.62 + Math.random() * 0.25, y: 0.18 + Math.random() * 0.1 });
+      pushVfx({
+        kind: "smoke",
+        x: src.x, y: src.y,
+        vx: vel.x * 0.12 + (Math.random() - 0.5) * 0.35,
+        vy: 0.45 + Math.random() * 0.55,
+        life: 0.55 + Math.random() * 0.45,
+        age: 0,
+        r: 0.16 + Math.random() * 0.12,
+        tint: heavy ? "55,50,44" : "90,86,80"
+      });
+    }
+  }
+  function spawnDamageSparks() {
+    if (!car || !car.chassis || fxIsLow()) return;
+    const src = car.chassis.getWorldPoint({ x: 0.7, y: 0.08 });
+    const n = fxIsHigh() ? 8 : 5;
+    for (let i = 0; i < n; i++) {
+      pushVfx({
+        kind: "spark",
+        x: src.x + (Math.random() - 0.5) * 0.16,
+        y: src.y + (Math.random() - 0.5) * 0.08,
+        vx: (Math.random() - 0.5) * 2.8,
+        vy: 1.2 + Math.random() * 2.6,
+        life: 0.14 + Math.random() * 0.12,
+        age: 0,
+        r: 0.03
+      });
+    }
+    if (car.dmg && (car.dmg.wrecked || car.dmg.engine >= 0.95)) {
+      pushVfx({
+        kind: "flame",
+        x: src.x, y: src.y,
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: 0.7 + Math.random() * 0.5,
+        life: 0.28 + Math.random() * 0.16,
+        age: 0,
+        r: 0.07 + Math.random() * 0.05
+      });
+    }
+  }
+  function tickDamageFx() {
+    if (!car || !car.dmg) return;
+    const d = car.dmg;
+    const overall = dmgOverall();
+    if (d.engine > 0.6 || d.front > 0.7 || d.wrecked) {
+      if (tRun - d.lastSmoke > (fxIsLow() ? 0.16 : 0.07)) {
+        d.lastSmoke = tRun;
+        spawnDamageSmoke(d.wrecked || d.engine > 0.85);
+      }
+    }
+    if (!fxIsLow() && (d.wrecked || d.engine > 0.9 || overall >= CFG.DMG_CRIT)) {
+      if (tRun - d.lastSpark > 0.11) {
+        d.lastSpark = tRun;
+        spawnDamageSparks();
+      }
+    }
+  }
+  function applySetDamage(spec, opts) {
+    opts = opts || {};
+    if (!car) return null;
+    if (!car.dmg) car.dmg = freshDamage();
+    const d = car.dmg;
+    function fill(v) {
+      ["front", "rear", "roof", "side", "wheelF", "wheelR", "suspF", "suspR", "engine"].forEach(function (k) { d[k] = v; });
+    }
+    if (spec === "light") {
+      fill(0.36);
+      d.front = 0.48; d.side = 0.44; d.rear = 0.36; d.engine = 0.12;
+      d.wheelF = 0.32; d.wheelR = 0.28; d.roof = 0.26; d.suspF = 0.22; d.suspR = 0.16;
+    } else if (spec === "heavy") {
+      fill(0.78);
+      d.front = 0.88; d.engine = 0.84; d.wheelF = 0.82; d.suspF = 0.84;
+      d.side = 0.80; d.rear = 0.70; d.roof = 0.72; d.wheelR = 0.70; d.suspR = 0.62;
+    } else if (spec === "wreck" || spec === "total") {
+      fill(0.95);
+      d.engine = 1; d.wantBumper = true; d.wrecked = true;
+    } else if (spec && typeof spec === "object") {
+      Object.keys(spec).forEach(function (k) { if (k in d && typeof spec[k] === "number" || typeof spec[k] === "boolean") d[k] = spec[k]; });
+    }
+    dmgBodyKey = "";
+    dmgWheelKey = { F: "", R: "" };
+    applyPendingBumper();
+    if (d.wrecked && !opts.preview) armWreckFail();
+    if (opts.preview) { wreckReason = d.wrecked ? "車子報廢了" : wreckReason; wreckFailT = 99; }
+    return dmgSnapshot();
+  }
+  function syncHudDamage() {
+    const root = document.getElementById("hudDmg");
+    if (!root) return;
+    const playing = (st === "play" || st === "countdown" || st === "pause" || st === "result") && !!car;
+    root.hidden = !playing;
+    if (!playing || !car || !car.dmg) return;
+    const overall = dmgOverall();
+    const wrecked = !!(car.dmg.wrecked || wreckReason);
+    const text = document.getElementById("hudDmgText");
+    if (text) text.textContent = dmgLabel(overall, wrecked);
+    const bar = document.getElementById("hudDmgBar");
+    if (bar) {
+      bar.style.width = (Math.max(0, Math.min(1, wrecked ? 1 : overall)) * 100).toFixed(1) + "%";
+      let col = "#3aa89b";
+      if (wrecked || overall >= CFG.DMG_CRIT) col = "#8a2414";
+      else if (overall >= CFG.DMG_HEAVY) col = "#c45c36";
+      else if (overall >= CFG.DMG_DENT) col = "#d0893a";
+      else if (overall >= CFG.DMG_LIGHT) col = "#e2c36a";
+      bar.style.background = col;
+    }
+    const pips = document.getElementById("hudDmgPips");
+    if (pips) {
+      const map = { front: car.dmg.front, rear: car.dmg.rear, roof: car.dmg.roof, side: car.dmg.side, wheelF: car.dmg.wheelF, wheelR: car.dmg.wheelR };
+      const kids = pips.querySelectorAll("i");
+      for (let i = 0; i < kids.length; i++) {
+        const z = kids[i].getAttribute("data-z");
+        kids[i].className = dmgStageOf(map[z] || 0) || "";
+      }
+    }
+  }
+  function dmgCacheKey() {
+    const d = car.dmg;
+    function q(v) { return Math.round((v || 0) * 8); }
+    return [q(d.front), q(d.rear), q(d.roof), q(d.side), d.bumperOff ? 1 : 0, fxQuality || ""].join(".");
+  }
+  function warpBodySlices(g, img, w, h, front, rear) {
+    const slices = 12;
+    const sw = w / slices;
+    const f = Math.max(0, (front - CFG.DMG_DENT) / (1 - CFG.DMG_DENT));
+    const r = Math.max(0, (rear - CFG.DMG_DENT) / (1 - CFG.DMG_DENT));
+    for (let i = 0; i < slices; i++) {
+      const u = i / (slices - 1);
+      let dx = 0, dy = 0, dw = sw;
+      if (u > 0.62 && f > 0) {
+        const k = (u - 0.62) / 0.38 * f;
+        dx = -k * 28;
+        dy = Math.sin(i * 1.7) * k * 16;
+        dw = sw * (1 - k * 0.32);
+      }
+      if (u < 0.32 && r > 0) {
+        const k = (0.32 - u) / 0.32 * r;
+        dx = k * 22;
+        dy = Math.sin(i * 1.3) * k * 14;
+        dw = sw * (1 - k * 0.26);
+      }
+      g.drawImage(img, i * sw, 0, sw, h, i * sw + dx, dy, Math.max(1, dw), h);
+    }
+  }
+  function paintBodyDecals(g, w, h, d) {
+    function seedRnd(seed) {
+      let s0 = (seed >>> 0) || 1;
+      return function () { s0 = (s0 * 1664525 + 1013904223) >>> 0; return s0 / 4294967296; };
+    }
+    function strokes(x0, y0, x1, y1, amt, seed) {
+      if (amt < CFG.DMG_LIGHT) return;
+      const rnd = seedRnd(seed);
+      const t = Math.max(0, (amt - CFG.DMG_LIGHT) / (1 - CFG.DMG_LIGHT));
+      const n = 3 + Math.floor(t * 12);
+      g.save();
+      g.globalCompositeOperation = "source-atop";
+      // 先鋪一層髒污，讓刮痕在縮小後仍看得出；輕微時較淡
+      if (amt >= CFG.DMG_LIGHT) {
+        g.fillStyle = "rgba(32,24,16," + (0.06 + t * 0.26) + ")";
+        for (let i = 0; i < 2 + Math.floor(amt * 3); i++) {
+          const x = x0 + rnd() * (x1 - x0);
+          const y = y0 + rnd() * (y1 - y0);
+          g.beginPath();
+          g.ellipse(x, y, (x1 - x0) * (0.18 + rnd() * 0.22), (y1 - y0) * (0.12 + rnd() * 0.18), rnd() * 0.8, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      g.strokeStyle = "rgba(18,12,8," + (0.34 + t * 0.5) + ")";
+      g.lineWidth = Math.max(7, w * 0.008) + amt * w * 0.01;
+      g.lineCap = "round";
+      for (let i = 0; i < n; i++) {
+        const x = x0 + rnd() * (x1 - x0);
+        const y = y0 + rnd() * (y1 - y0);
+        const a = (rnd() - 0.45) * 0.9;
+        const len = w * (0.05 + rnd() * (0.07 + amt * 0.08));
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len * 0.42);
+        g.stroke();
+      }
+      if (amt >= CFG.DMG_DENT) {
+        const dent = (amt - CFG.DMG_DENT) / (1 - CFG.DMG_DENT);
+        for (let i = 0; i < 2 + Math.floor(amt * 3); i++) {
+          const x = x0 + rnd() * (x1 - x0);
+          const y = y0 + rnd() * (y1 - y0);
+          const rx = w * (0.035 + rnd() * 0.05 + dent * 0.03);
+          const ry = h * (0.06 + rnd() * 0.08);
+          g.fillStyle = "rgba(12,8,6," + (0.22 + dent * 0.32) + ")";
+          g.beginPath();
+          g.ellipse(x, y, rx, ry, rnd() * 1.1, 0, Math.PI * 2);
+          g.fill();
+          g.strokeStyle = "rgba(8,6,4," + (0.35 + dent * 0.3) + ")";
+          g.lineWidth = Math.max(3, w * 0.004);
+          g.stroke();
+        }
+      }
+      g.restore();
+    }
+    // 精靈朝右：車頭在右側
+    strokes(w * 0.70, h * 0.38, w * 0.98, h * 0.92, d.front, 11);
+    strokes(w * 0.02, h * 0.28, w * 0.28, h * 0.88, d.rear, 29);
+    strokes(w * 0.30, h * 0.42, w * 0.68, h * 0.90, d.side, 47);
+    strokes(w * 0.22, h * 0.04, w * 0.58, h * 0.28, d.roof, 67);
+    if (d.front >= 0.45 || d.roof >= 0.4) {
+      const amt = Math.max(d.front, d.roof);
+      const rnd = seedRnd(91);
+      // 側窗中心大約在精靈中前上緣
+      const cx = w * 0.55, cy = h * 0.30;
+      g.save();
+      g.globalCompositeOperation = "source-atop";
+      g.fillStyle = "rgba(20,28,36," + (0.10 + amt * 0.16) + ")";
+      g.beginPath();
+      g.ellipse(cx, cy, w * 0.11, h * 0.16, -0.15, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = "rgba(230,236,240," + (0.55 + amt * 0.35) + ")";
+      g.lineWidth = Math.max(3, w * 0.0035);
+      g.lineCap = "round";
+      for (let i = 0; i < 7 + Math.floor(amt * 6); i++) {
+        const a = rnd() * Math.PI * 2;
+        const len = w * (0.04 + rnd() * 0.09);
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len * 0.75);
+        g.stroke();
+        if (rnd() > 0.4) {
+          const mid = 0.35 + rnd() * 0.4;
+          const bx = cx + Math.cos(a) * len * mid, by = cy + Math.sin(a) * len * mid * 0.75;
+          const ba = a + (rnd() - 0.5) * 1.5;
+          g.beginPath();
+          g.moveTo(bx, by);
+          g.lineTo(bx + Math.cos(ba) * w * 0.03, by + Math.sin(ba) * h * 0.04);
+          g.stroke();
+        }
+      }
+      g.restore();
+    }
+    if (d.bumperOff) {
+      g.save();
+      g.globalCompositeOperation = "destination-out";
+      g.beginPath();
+      g.moveTo(w * 0.86, h * 0.55);
+      g.lineTo(w, h * 0.52);
+      g.lineTo(w, h);
+      g.lineTo(w * 0.78, h);
+      g.lineTo(w * 0.84, h * 0.72);
+      g.closePath();
+      g.fill();
+      g.restore();
+      g.save();
+      g.globalCompositeOperation = "source-atop";
+      g.fillStyle = "rgba(28,24,20,0.85)";
+      g.fillRect(w * 0.80, h * 0.58, w * 0.08, h * 0.42);
+      g.restore();
+    }
+  }
+  function getDamagedBodySprite(base) {
+    if (!car || !car.dmg) return base;
+    const d = car.dmg;
+    if (d.front < CFG.DMG_LIGHT && d.rear < CFG.DMG_LIGHT && d.roof < CFG.DMG_LIGHT && d.side < CFG.DMG_LIGHT && !d.bumperOff) return base;
+    const key = dmgCacheKey();
+    if (dmgBodyKey === key && dmgBodyCache) return dmgBodyCache;
+    const w = base.naturalWidth || base.width;
+    const h = base.naturalHeight || base.height;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const g = c.getContext("2d");
+    const warp = !fxIsLow() && (d.front >= CFG.DMG_DENT || d.rear >= CFG.DMG_DENT);
+    if (warp) warpBodySlices(g, base, w, h, d.front, d.rear);
+    else g.drawImage(base, 0, 0);
+    paintBodyDecals(g, w, h, d);
+    dmgBodyCache = c;
+    dmgBodyKey = key;
+    return c;
+  }
+  function getDamagedWheelSprite(base, which) {
+    if (!car || !car.dmg) return base;
+    const wd = which === "F" ? car.dmg.wheelF : car.dmg.wheelR;
+    if (wd < CFG.DMG_LIGHT) return base;
+    const key = which + ":" + Math.round(wd * 8) + (fxQuality || "");
+    if (dmgWheelKey[which] === key && dmgWheelCache[which]) return dmgWheelCache[which];
+    const w = base.naturalWidth || base.width;
+    const h = base.naturalHeight || base.height;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const g = c.getContext("2d");
+    g.drawImage(base, 0, 0);
+    g.globalCompositeOperation = "source-atop";
+    g.strokeStyle = "rgba(230,230,230," + (0.25 + wd * 0.4) + ")";
+    g.lineWidth = 2;
+    const n = 3 + Math.floor(wd * 4);
+    for (let i = 0; i < n; i++) {
+      const a = i * 1.7 + wd;
+      g.beginPath();
+      g.moveTo(w * 0.5, h * 0.5);
+      g.lineTo(w * 0.5 + Math.cos(a) * w * 0.46, h * 0.5 + Math.sin(a) * h * 0.46);
+      g.stroke();
+    }
+    if (wd >= CFG.DMG_HEAVY) {
+      g.fillStyle = "rgba(0,0,0,0.28)";
+      g.beginPath();
+      g.ellipse(w * 0.62, h * 0.38, w * 0.12, h * 0.08, 0.4, 0, Math.PI * 2);
+      g.fill();
+    }
+    dmgWheelCache[which] = c;
+    dmgWheelKey[which] = key;
+    return c;
+  }
+  function drawDetachedBumper() {
+    if (!car || !car.dmg || !car.dmg.bumperBody) return;
+    const b = car.dmg.bumperBody;
+    inBody(b, function () {
+      ctx.fillStyle = "#c9c3b6";
+      ctx.strokeStyle = "#6f6a62";
+      ctx.lineWidth = 0.03;
+      ctx.beginPath();
+      ctx.rect(-0.22, -0.08, 0.44, 0.16);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#3c3a36";
+      ctx.fillRect(-0.20, -0.08, 0.40, 0.04);
+    });
+  }
+
 
   function resetDriveState() {
     reversing = false; revHoldT = 0; revReady = false; brakePrev = false;
@@ -910,13 +1469,28 @@
       speed = 0;
       torque = CFG.COAST_TORQUE;
     }
-    [car.rear, car.front].forEach(function (w) {
+    const dmg = car.dmg;
+    let torqueMul = 1;
+    if (dmg) {
+      const eng = dmg.engine || 0;
+      if (eng > 0.55) torqueMul = Math.max(0.45, 1 - 0.55 * (eng - 0.55) / 0.45);
+      if (dmg.wrecked) torqueMul = Math.min(torqueMul, 0.15);
+    }
+    [car.rear, car.front].forEach(function (w, idx) {
       if (!w.joint || !w.joint.isActive || (w.joint.m_bodyA && !w.joint.m_bodyA.isActive())) return;
       try {
         if (!w.joint.getBodyA) return;
+        let spd = speed, maxT = driveScale > 0 ? w.torque * driveScale * torqueMul : torque;
+        if (dmg) {
+          const wh = idx === 1 ? dmg.wheelF : dmg.wheelR;
+          if (wh > 0.6) {
+            spd += Math.sin((tRun + idx) * 28) * 2.8 * (wh - 0.6);
+            if (driveScale > 0) maxT *= (1 - 0.35 * Math.min(1, (wh - 0.6) / 0.4));
+          }
+        }
         w.joint.enableMotor(enable);
-        w.joint.setMotorSpeed(speed);
-        w.joint.setMaxMotorTorque(driveScale > 0 ? w.torque * driveScale : torque);
+        w.joint.setMotorSpeed(spd);
+        w.joint.setMaxMotorTorque(maxT);
       } catch (e) {}
     });
   }
@@ -958,6 +1532,9 @@
   let vfx = [];
   let camX = 0, camY = 1.2, camAx = 0.33, camAy = 0.56, result = null;
   let brokenCount = 0, cargoLost = false, cargoFailT = 0, cargoFailReason = "";
+  let wreckFailT = 0, wreckReason = "";
+  let dmgBodyCache = null, dmgBodyKey = "";
+  let dmgWheelCache = { F: null, R: null }, dmgWheelKey = { F: "", R: "" };
   let acc = 0, lastTs = 0;
   let inputAt = 0, motorAt = 0; // 延遲量測
   let fpsSamples = [], lastFpsTs = 0, fpsNow = 60;
@@ -1405,6 +1982,7 @@
     car = createCar(world, meta.spawn.x, meta.spawn.y, !!level.cargo);
     brokenCount = 0;
     cargoLost = false; cargoFailT = 0; cargoFailReason = "";
+    resetDamage();
     tRun = 0; tGoal = 0; tOver = 0; tImmune = 0.9; result = null;
     camX = meta.spawn.x; camY = meta.spawn.y;
     gasHeld = false; brakeHeld = false;
@@ -1430,6 +2008,7 @@
           ud._wantBreak = true;
         }
       });
+      noteCarImpact(contact, im);
     });
   }
 
@@ -1517,13 +2096,18 @@
       ok = false;
       reason = cargoFailReason || "陶罐掉了";
     }
+    if (ok && car && car.dmg && car.dmg.wrecked) {
+      ok = false;
+      reason = wreckReason || "車子報廢了";
+    }
     const partsOk = brokenCount === 0;
     const time = tRun;
     const stars = ok ? starCount(time, cargoOk, partsOk) : 0;
+    const dmg = dmgSnapshot();
     result = {
       ok: ok, reason: reason || (ok ? "到達" : "失敗"),
       time: time, stars: stars, cargoOk: cargoOk, partsOk: partsOk,
-      broken: brokenCount, levelId: level.id
+      broken: brokenCount, levelId: level.id, dmg: dmg
     };
     if (ok) {
       const prev = store.stars[level.id] || 0;
@@ -1575,6 +2159,11 @@
       spawnDebris(n);
       if (!botMode) playSfx("crash");
     }
+    syncBreakDamage();
+    applyPendingBumper();
+    applyDamageHandling();
+    if (st === "play" || st === "result") tickDamageFx();
+    if (st === "play" && tImmune <= 0 && car.dmg && car.dmg.wrecked) armWreckFail();
     // 貨物掉落或摔破即失敗（稍等讓破碎動畫可見）
     if (level && level.cargo && st === "play" && tImmune <= 0) {
       let shattered = false, fallen = false;
@@ -1595,7 +2184,14 @@
       finishRun(false, "掉出跑道");
       return;
     }
-    if (cargoFailReason) {
+    if (wreckReason) {
+      wreckFailT -= dt;
+      if (wreckFailT <= 0) {
+        finishRun(false, wreckReason);
+        return;
+      }
+      tGoal = 0;
+    } else if (cargoFailReason) {
       cargoFailT -= dt;
       if (cargoFailT <= 0) {
         finishRun(false, cargoFailReason);
@@ -1960,7 +2556,14 @@
   function drawBuggyWheel(wheelBody) {
     const av = Math.abs(wheelBody.getAngularVelocity ? wheelBody.getAngularVelocity() : 0);
     const blur = !fxIsLow() && av > 10;
+    const which = (car && car.front && car.front.body === wheelBody) ? "F" : "R";
+    const wd = car && car.dmg ? (which === "F" ? car.dmg.wheelF : car.dmg.wheelR) : 0;
     inBody(wheelBody, function () {
+      if (wd > 0.6) {
+        ctx.rotate(Math.sin((tRun || 0) * 26) * 0.14 * (wd - 0.6));
+        const squash = 1 - 0.08 * Math.min(1, (wd - 0.6) / 0.4);
+        ctx.scale(1 / squash, squash);
+      }
       const src = spriteImgs.wheel;
       const ox = -SPRITE.wheel.w * SPRITE.mPerPx * 0.5;
       const oy = SPRITE.wheel.h * SPRITE.mPerPx * 0.5;
@@ -1976,7 +2579,7 @@
         }
         return;
       }
-      const img = getLitSprite(src, "wheel");
+      const img = getDamagedWheelSprite(getLitSprite(src, "wheel"), which);
       if (blur) {
         const copies = fxIsHigh() ? 5 : 3;
         const span = Math.min(0.55, av * 0.012);
@@ -2012,8 +2615,9 @@
     inBody(car.chassis, function () {
       const src = spriteImgs.body;
       if (!spriteOk(src)) return;
-      drawSpriteYUp(getLitSprite(src, "body"), SPRITE.body.ox, SPRITE.body.oy, SPRITE.body.w, SPRITE.body.h);
-      if (!fxIsLow()) {
+      const lit = getLitSprite(src, "body");
+      drawSpriteYUp(getDamagedBodySprite(lit), SPRITE.body.ox, SPRITE.body.oy, SPRITE.body.w, SPRITE.body.h);
+      if (!fxIsLow() && dmgOverall() < 0.55) {
         const sweep = ((tRun || 0) * 0.35) % 2.6 - 1.1;
         ctx.save();
         ctx.beginPath();
@@ -2327,6 +2931,8 @@
       p.y += p.vy * dt;
       if (p.kind === "debris" || p.kind === "spark" || p.kind === "confetti") p.vy -= 9 * dt;
       else if (p.kind === "shock") { /* ring expands via age */ }
+      else if (p.kind === "smoke") { p.vy += 0.55 * dt; p.r += 0.12 * dt; }
+      else if (p.kind === "flame") { p.vy += 0.7 * dt; }
       else p.vy += 0.35 * dt;
       if (p.rv) p.rot = (p.rot || 0) + p.rv * dt;
       if (p.age >= p.life) vfx.splice(i, 1);
@@ -2366,6 +2972,22 @@
         ctx.strokeStyle = "rgba(255,244,220," + (0.55 * u) + ")";
         ctx.lineWidth = 3 * u + 1;
         ctx.stroke();
+        continue;
+      }
+      if (p.kind === "smoke") {
+        const rr = p.r * ppm * (0.9 + (1 - u) * 1.8);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rr * 1.25, rr * 0.9, 0, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(" + (p.tint || "90,86,80") + "," + (0.55 * u) + ")";
+        ctx.fill();
+        continue;
+      }
+      if (p.kind === "flame") {
+        const rr = p.r * ppm * (1.4 + u * 0.8);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rr * 0.7, rr * 1.5, 0, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255," + Math.floor(80 + 90 * u) + ",30," + (0.85 * u) + ")";
+        ctx.fill();
         continue;
       }
       if (p.kind === "confetti") {
@@ -2484,6 +3106,7 @@
     if (car.front && car.front.body) drawBuggyWheel(car.front.body);
     drawSuspension();
     drawHull();
+    drawDetachedBumper();
     drawCargoBed();
     drawRoofPanel();
     if (car.cargo) {
@@ -2775,6 +3398,7 @@
     hud: document.getElementById("hud"),
     hudTitle: document.getElementById("hudTitle"),
     hudSub: document.getElementById("hudSub"),
+    hudDmg: document.getElementById("hudDmg"),
     controls: document.getElementById("controls"),
     hint: document.getElementById("hintBar"),
     count: document.getElementById("count"),
@@ -2884,7 +3508,12 @@
     if (r.ok) {
       lines.push("時間 " + r.time.toFixed(2) + " 秒　" + starText(r.stars));
       if (level.cargo) lines.push(r.cargoOk ? "陶罐平安。" : "陶罐沒保住。");
-      lines.push(r.partsOk ? "車身零件都還在。" : ("掉了 " + r.broken + " 件。"));
+      if (r.partsOk) {
+        const ov = r.dmg ? r.dmg.overall : 0;
+        lines.push(ov >= 0.25 ? "車身有擦痕，零件都還在。" : "車身零件都還在。");
+      } else {
+        lines.push("掉了 " + r.broken + " 件。");
+      }
     } else {
       lines.push(r.reason + "。");
       lines.push("用過 " + r.time.toFixed(2) + " 秒。");
@@ -3006,6 +3635,7 @@
       }
     }
     syncPedals();
+    syncHudDamage();
     tickGameAudio();
     stepShake(frameDt);
     tickFxQuality();
@@ -3211,12 +3841,14 @@
         break;
       }
     }
+    const dmg = (result && result.dmg) ? result.dmg : dmgSnapshot();
     const out = {
       id: L.id, name: L.name, ok: ok, reason: reason, time: time,
       stars: result && result.ok ? result.stars : 0,
       cargoOk: result ? result.cargoOk : true,
       partsOk: result ? result.partsOk : true,
-      broken: brokenCount
+      broken: brokenCount,
+      dmg: dmg
     };
     // 恢復選單狀態，避免檢查污染畫面
     botMode = saved.botMode;
@@ -3242,6 +3874,7 @@
     showMenu: showMenu,
     beatLevel: beatLevel,
     beatAll: beatAll,
+    setDamage: applySetDamage,
     traceLevel: function (id, seconds) {
       setupLevel(id, {});
       botMode = true;
@@ -3273,6 +3906,7 @@
         gasStrength: gasStrength, brakeStrength: brakeStrength,
         gasSeg: pedalSegment(gasStrength), brakeSeg: pedalSegment(brakeStrength),
         broken: brokenCount, cargoLost: cargoLost, fps: fpsNow,
+        dmg: dmgSnapshot(), wreckReason: wreckReason || "",
         pot: (function () {
           if (!car || !car.cargo || !car.cargo[0] || !car.cargo[0].body) return null;
           const c = car.cargo[0];
