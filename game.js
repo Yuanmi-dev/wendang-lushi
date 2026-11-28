@@ -71,7 +71,11 @@
       spriteImgs[k].src = SPRITE[k].src;
     });
   })();
-  function spriteOk(img) { return img && img.complete && img.naturalWidth > 0; }
+  function spriteOk(img) {
+    if (!img) return false;
+    if (img.tagName === "CANVAS") return img.width > 0 && img.height > 0;
+    return !!(img.complete && img.naturalWidth > 0);
+  }
   function drawSpriteYUp(img, x, y, wPx, hPx) {
     // inBody 後座標 y 朝上；用 scale 翻轉影像，避免 drawImage 負高度再翻一次
     const s = SPRITE.mPerPx;
@@ -268,7 +272,7 @@
     updateEngine(gas, playing);
   }
   function tickImpactAudio() {
-    if (st !== "play" || !car || botMode) return;
+    if (st !== "play" || !car) return;
     const wr = car.rear && car.rear.body ? car.rear.body.getPosition() : null;
     const wf = car.front && car.front.body ? car.front.body.getPosition() : null;
     if (!wr || !wf) return;
@@ -279,13 +283,15 @@
     const vy = car.chassis.getLinearVelocity().y;
     if (audio.wasAir && !air && vy < -1.2 && tRun - (audio.lastLandAt || 0) > 0.28) {
       audio.lastLandAt = tRun;
-      playSfx("land", { vol: Math.min(1, 0.4 + Math.abs(vy) * 0.12) });
+      spawnLandPuff(vy);
+      if (vy < -3.0) addShake(Math.min(0.42, (-vy - 3) * 0.08));
+      if (!botMode) playSfx("land", { vol: Math.min(1, 0.4 + Math.abs(vy) * 0.12) });
     }
     audio.wasAir = air;
     const vx = car.chassis.getLinearVelocity().x;
     if ((car.brake || 0) > 0.35 && Math.abs(vx) > 3 && tRun - (audio.lastSkidAt || 0) > 0.7) {
       audio.lastSkidAt = tRun;
-      playSfx("brake", { vol: Math.min(1, 0.35 + car.brake * 0.4) });
+      if (!botMode) playSfx("brake", { vol: Math.min(1, 0.35 + car.brake * 0.4) });
     }
   }
 
@@ -915,6 +921,129 @@
   let inputAt = 0, motorAt = 0; // 延遲量測
   let fpsSamples = [], lastFpsTs = 0, fpsNow = 60;
   let botMode = false;
+  let fxQuality = "high", fxAuto = true, fxLowStreak = 0;
+  let basePpm = 42, camZoom = 1;
+  let shakeAmp = 0, shakePhase = 0, shakeX = 0, shakeY = 0;
+  let dirtTile = null, dirtPat = null, vignetteCanvas = null, vignetteKey = "";
+  let litBody = null, litWheel = null;
+
+  function fxIsLow() { return fxQuality === "low"; }
+  function fxIsHigh() { return fxQuality === "high"; }
+  function addShake(a) { shakeAmp = Math.min(0.6, shakeAmp + a); }
+  function stepShake(dt) {
+    shakeAmp = Math.max(0, shakeAmp - dt * 2.6);
+    if (shakeAmp < 0.012) { shakeX = 0; shakeY = 0; return; }
+    shakePhase += dt * 42;
+    shakeX = Math.sin(shakePhase * 1.7) * shakeAmp * 6;
+    shakeY = Math.cos(shakePhase * 2.05) * shakeAmp * 3.6;
+  }
+  function updateVisualZoom() {
+    let target = 1;
+    if (car && (st === "play" || st === "countdown")) {
+      const v = car.chassis.getLinearVelocity();
+      const sp = Math.hypot(v.x, v.y);
+      target = 1 - Math.min(0.10, Math.max(0, (sp - 3.2) / 16) * 0.10);
+    }
+    camZoom += (target - camZoom) * 0.07;
+    ppm = basePpm * camZoom;
+  }
+  function tickFxQuality() {
+    if (!fxAuto) return;
+    if (fpsNow > 0 && fpsNow < 48) {
+      fxLowStreak += 1;
+      if (fxLowStreak > 50 && fxQuality === "high") { fxQuality = "medium"; vignetteKey = ""; }
+      else if (fxLowStreak > 100 && fxQuality !== "low") { fxQuality = "low"; vignetteKey = ""; layout(); }
+    } else {
+      fxLowStreak = Math.max(0, fxLowStreak - 2);
+    }
+  }
+  function ensureDirtTile() {
+    if (dirtTile) return;
+    const s = 128;
+    const c = document.createElement("canvas");
+    c.width = s; c.height = s;
+    const g = c.getContext("2d");
+    g.fillStyle = "#c49658";
+    g.fillRect(0, 0, s, s);
+    let seed = 12345;
+    function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+    for (let i = 0; i < 820; i++) {
+      const x = rnd() * s, y = rnd() * s, r = 0.5 + rnd() * 1.7;
+      const v = rnd();
+      g.fillStyle = v > 0.58
+        ? "rgba(90,55,28," + (0.10 + rnd() * 0.12) + ")"
+        : v > 0.28
+          ? "rgba(232,190,130," + (0.10 + rnd() * 0.13) + ")"
+          : "rgba(70,42,20," + (0.07 + rnd() * 0.1) + ")";
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+    for (let i = 0; i < 16; i++) {
+      g.strokeStyle = "rgba(80,48,24," + (0.05 + rnd() * 0.06) + ")";
+      g.lineWidth = 0.7 + rnd();
+      const y = rnd() * s;
+      g.beginPath(); g.moveTo(0, y); g.lineTo(s, y + (rnd() - 0.5) * 8); g.stroke();
+    }
+    dirtTile = c;
+    dirtPat = ctx.createPattern(c, "repeat");
+  }
+  function fillWithDirt() {
+    ctx.fillStyle = palette.dirt;
+    ctx.fill();
+    if (fxIsLow()) return;
+    ensureDirtTile();
+    if (!dirtPat) return;
+    ctx.save();
+    ctx.clip();
+    const ox = -(((camX * ppm) % 128) + 128) % 128;
+    const oy = -(((-camY * ppm) % 128) + 128) % 128;
+    ctx.translate(ox, oy);
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = dirtPat;
+    ctx.fillRect(-128, -128, viewW + 256, viewH + 256);
+    ctx.restore();
+  }
+  function strokeGrassEdge(drawTop) {
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(90,58,28,0.55)";
+    ctx.lineWidth = 8;
+    drawTop(); ctx.stroke();
+    ctx.strokeStyle = "#5a7836";
+    ctx.lineWidth = 5.5;
+    drawTop(); ctx.stroke();
+    ctx.strokeStyle = "#8aaa52";
+    ctx.lineWidth = 2.6;
+    drawTop(); ctx.stroke();
+    ctx.strokeStyle = "rgba(255,244,210,0.28)";
+    ctx.lineWidth = 1.15;
+    drawTop(); ctx.stroke();
+  }
+  function getLitSprite(img, kind) {
+    if (!spriteOk(img) || fxIsLow()) return img;
+    if (kind === "body" && litBody && litBody._src === img) return litBody;
+    if (kind === "wheel" && litWheel && litWheel._src === img) return litWheel;
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = "source-atop";
+    const grd = g.createLinearGradient(c.width * 0.08, c.height * 0.04, c.width * 0.85, c.height * 0.7);
+    grd.addColorStop(0, "rgba(255,252,245,0.32)");
+    grd.addColorStop(0.32, "rgba(255,248,230,0.10)");
+    grd.addColorStop(0.7, "rgba(0,0,0,0)");
+    g.fillStyle = grd;
+    g.fillRect(0, 0, c.width, c.height);
+    const rim = g.createLinearGradient(0, 0, 0, c.height * 0.28);
+    rim.addColorStop(0, "rgba(255,255,255,0.34)");
+    rim.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = rim;
+    g.fillRect(0, 0, c.width, c.height * 0.3);
+    c._src = img;
+    if (kind === "body") litBody = c;
+    else litWheel = c;
+    return c;
+  }
 
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -924,17 +1053,19 @@
     const vv = window.visualViewport;
     const w = Math.max(1, (vv && vv.width) || window.innerWidth || 800);
     const h = Math.max(1, (vv && vv.height) || window.innerHeight || 450);
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const dprCap = (typeof fxQuality === "string" && fxQuality === "low") ? 1.25 : 2;
+    const dpr = Math.min(dprCap, window.devicePixelRatio || 1);
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     viewW = w; viewH = h;
     if (h > w * 1.15) {
       // 直式手機：略為拉近，讓車體更大，同時還留得出前方路面
-      ppm = Math.max(44, Math.min(54, w / 8.3));
+      basePpm = Math.max(44, Math.min(54, w / 8.3));
     } else {
-      ppm = Math.max(36, Math.min(56, Math.min(w / 15.5, h / 9.5)));
+      basePpm = Math.max(36, Math.min(56, Math.min(w / 15.5, h / 9.5)));
     }
+    ppm = basePpm * camZoom;
   }
 
   function isPortrait() {
@@ -1094,7 +1225,8 @@
     const n = (tImmune > 0 ? 0 : queueBreaks(world, car.breakables, 1 / dt)) + nw;
     if (n) {
       brokenCount += n;
-      playSfx("crash");
+      spawnDebris(n);
+      if (!botMode) playSfx("crash");
       car.breakables.forEach(function (it) {
         if (it.kind === "pot" && it.broken) cargoLost = true;
       });
@@ -1260,8 +1392,8 @@
     const speed = Math.abs(v.x);
     // 車體本身已在畫面 30–35%，只需依速度做很小的前視，避免被推到左緣
     const leadT = Math.max(0, Math.min(1, (speed - 2) / 12));
-    ax += (goingLeft ? 1 : -1) * leadT * 0.02; // 0.33 → 約 0.31
-    const lookX = Math.max(0, Math.min(0.45, speed * 0.04)) * (goingLeft ? -1 : 1);
+    ax += (goingLeft ? 1 : -1) * leadT * 0.028;
+    const lookX = Math.max(0, Math.min(0.7, speed * 0.055)) * (goingLeft ? -1 : 1);
     let tx = p.x + lookX;
     let pitch = car.chassis.getAngle();
     while (pitch > Math.PI) pitch -= Math.PI * 2;
@@ -1334,6 +1466,14 @@
     if (spriteOk(bgImgs.far)) {
       const fh = Math.max(80, Math.min(viewH * 0.28, 190));
       drawTiledBg(bgImgs.far, horizon + fh * 0.08, fh, 0.12, 1);
+      if (!fxIsLow()) {
+        const hg = ctx.createLinearGradient(0, horizon - fh, 0, horizon + 8);
+        hg.addColorStop(0, "rgba(240,201,160,0.30)");
+        hg.addColorStop(0.65, "rgba(240,201,160,0.08)");
+        hg.addColorStop(1, "rgba(240,201,160,0)");
+        ctx.fillStyle = hg;
+        ctx.fillRect(0, horizon - fh, viewW, fh + 8);
+      }
     } else {
       ctx.fillStyle = "rgba(180,120,70,0.18)";
       ctx.beginPath();
@@ -1355,9 +1495,11 @@
     if (!meta) return;
     // 在鏡頭下方鋪土
     const y0 = wy(meta.endY != null ? Math.min(0, meta.endY) : 0);
-    ctx.fillStyle = palette.dirt;
-    ctx.fillRect(0, Math.min(viewH, y0), viewW, viewH);
-    ctx.fillStyle = palette.dirtDark;
+    const top = Math.min(viewH, y0);
+    ctx.beginPath();
+    ctx.rect(0, top, viewW, viewH - top + 2);
+    fillWithDirt();
+    ctx.fillStyle = "rgba(80,48,24,0.28)";
     ctx.fillRect(0, Math.min(viewH, y0 + 18), viewW, viewH);
   }
 
@@ -1391,15 +1533,15 @@
 
   function drawBuggyWheel(wheelBody) {
     inBody(wheelBody, function () {
-      const img = spriteImgs.wheel;
-      if (!spriteOk(img)) {
+      const src = spriteImgs.wheel;
+      if (!spriteOk(src)) {
         ctx.beginPath();
         ctx.arc(0, 0, CFG.WHEEL_R, 0, Math.PI * 2);
         ctx.fillStyle = "#1a1a1d";
         ctx.fill();
         return;
       }
-      drawSpriteYUp(img, -SPRITE.wheel.w * SPRITE.mPerPx * 0.5, SPRITE.wheel.h * SPRITE.mPerPx * 0.5, SPRITE.wheel.w, SPRITE.wheel.h);
+      drawSpriteYUp(getLitSprite(src, "wheel"), -SPRITE.wheel.w * SPRITE.mPerPx * 0.5, SPRITE.wheel.h * SPRITE.mPerPx * 0.5, SPRITE.wheel.w, SPRITE.wheel.h);
     });
   }
 
@@ -1418,9 +1560,9 @@
   function drawHull() {
     if (!car || !car.chassis) return;
     inBody(car.chassis, function () {
-      const img = spriteImgs.body;
-      if (!spriteOk(img)) return;
-      drawSpriteYUp(img, SPRITE.body.ox, SPRITE.body.oy, SPRITE.body.w, SPRITE.body.h);
+      const src = spriteImgs.body;
+      if (!spriteOk(src)) return;
+      drawSpriteYUp(getLitSprite(src, "body"), SPRITE.body.ox, SPRITE.body.oy, SPRITE.body.w, SPRITE.body.h);
       if (roofBroken() && spriteOk(spriteImgs.roof)) {
         ctx.save();
         ctx.globalCompositeOperation = "destination-out";
@@ -1496,46 +1638,133 @@
     const wfL = car.chassis.getLocalPoint(wf);
     const droop = Math.min(wrL.y, wfL.y);
     const air = Math.max(0, Math.min(1, (-0.50 - droop) / 0.35));
-    const a = 0.22 * (1 - air);
+    const a = 0.28 * (1 - air);
     if (a < 0.03) return;
     const mx = (wr.x + wf.x) * 0.5, my = Math.min(wr.y, wf.y) - CFG.WHEEL_R * 0.15;
     const sx = wx(mx), sy = wy(my);
+    const ang = -car.chassis.getAngle();
     ctx.save();
     ctx.translate(sx, sy);
-    ctx.rotate(-car.chassis.getAngle());
+    ctx.rotate(ang);
+    const rx = 1.42 * ppm, ry = 0.24 * ppm;
+    if (!fxIsLow()) {
+      ctx.fillStyle = "rgba(40,24,12," + (a * 0.28) + ")";
+      ctx.beginPath(); ctx.ellipse(0, 0, rx * 1.35, ry * 1.7, 0, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.fillStyle = "rgba(40,24,12," + a + ")";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 1.35 * ppm, 0.22 * ppm, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
+    if (air < 0.65) {
+      const ca = 0.34 * (1 - air);
+      [[wr, wrL], [wf, wfL]].forEach(function (pair) {
+        const p = pair[0], loc = pair[1];
+        const grounded = loc.y > -0.52;
+        if (!grounded) return;
+        ctx.save();
+        ctx.fillStyle = "rgba(30,16,8," + ca + ")";
+        ctx.beginPath();
+        ctx.ellipse(wx(p.x), wy(p.y - CFG.WHEEL_R * 0.92), 0.32 * ppm, 0.11 * ppm, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+    }
   }
 
+  function pushVfx(p) {
+    const cap = fxIsLow() ? 22 : fxIsHigh() ? 70 : 40;
+    vfx.push(p);
+    if (vfx.length > cap) vfx.splice(0, vfx.length - cap);
+  }
   function spawnVfx() {
     if (!car || st !== "play") return;
-    const gas = !!car.gas && !reversing;
-    if (!gas) return;
-    if (Math.random() > 0.45) return;
-    const ex = car.chassis.getWorldPoint({ x: -1.34, y: -0.12 });
+    const vel = car.chassis.getLinearVelocity();
+    const gas = (car.gas || 0) > 0.08 && !reversing;
     const ang = car.chassis.getAngle();
-    vfx.push({
-      kind: "exhaust",
-      x: ex.x, y: ex.y,
-      vx: -Math.cos(ang) * (0.6 + Math.random() * 0.5) + car.chassis.getLinearVelocity().x * 0.15,
-      vy: 0.2 + Math.random() * 0.4,
-      life: 0.45 + Math.random() * 0.25,
-      age: 0,
-      r: 0.07 + Math.random() * 0.04
-    });
-    const wr = car.rear.body.getPosition();
-    const wrL = car.chassis.getLocalPoint(wr);
-    if (wrL.y > -0.55 && Math.random() < 0.5) {
-      vfx.push({
-        kind: "dust",
-        x: wr.x - 0.15, y: wr.y - CFG.WHEEL_R * 0.8,
-        vx: -0.4 - Math.random() * 0.6, vy: 0.15 + Math.random() * 0.3,
-        life: 0.35 + Math.random() * 0.2,
+    if (gas && Math.random() < (fxIsLow() ? 0.28 : 0.7)) {
+      const ex = car.chassis.getWorldPoint({ x: -1.34, y: -0.12 });
+      pushVfx({
+        kind: "exhaust",
+        x: ex.x, y: ex.y,
+        vx: -Math.cos(ang) * (0.6 + Math.random() * 0.5) + vel.x * 0.15,
+        vy: 0.2 + Math.random() * 0.4,
+        life: 0.45 + Math.random() * 0.25,
         age: 0,
-        r: 0.08 + Math.random() * 0.06
+        r: 0.07 + Math.random() * 0.04
+      });
+    }
+    const wheels = [car.rear && car.rear.body, car.front && car.front.body];
+    const dustChance = fxIsLow() ? 0.22 : (0.35 + Math.min(0.5, (car.gas || 0) * 0.4 + Math.abs(vel.x) * 0.03));
+    for (let w = 0; w < wheels.length; w++) {
+      const body = wheels[w];
+      if (!body) continue;
+      const wr = body.getPosition();
+      const wrL = car.chassis.getLocalPoint(wr);
+      if (wrL.y > -0.52 && Math.abs(vel.x) > 1.2 && Math.random() < dustChance) {
+        const dir = vel.x >= 0 ? -1 : 1;
+        pushVfx({
+          kind: "dust",
+          x: wr.x + dir * 0.12, y: wr.y - CFG.WHEEL_R * 0.8,
+          vx: dir * (0.5 + Math.random() * 0.8) + vel.x * 0.08,
+          vy: 0.2 + Math.random() * 0.45,
+          life: 0.32 + Math.random() * 0.28,
+          age: 0,
+          r: 0.09 + Math.random() * 0.08
+        });
+      }
+    }
+  }
+  function spawnLandPuff(vy) {
+    if (!car) return;
+    const wr = car.rear.body.getPosition();
+    const wf = car.front.body.getPosition();
+    const power = Math.min(1.5, 0.45 + Math.abs(vy) * 0.16);
+    const n = fxIsLow() ? 4 : 11;
+    for (let i = 0; i < n; i++) {
+      const src = i % 2 ? wr : wf;
+      pushVfx({
+        kind: "puff",
+        x: src.x + (Math.random() - 0.5) * 0.28,
+        y: src.y - CFG.WHEEL_R * 0.7,
+        vx: (Math.random() - 0.5) * 2.6 * power,
+        vy: 0.5 + Math.random() * 1.3,
+        life: 0.28 + Math.random() * 0.26,
+        age: 0,
+        r: 0.09 + Math.random() * 0.11 * power
+      });
+    }
+    if (Math.abs(vy) > 4 && !fxIsLow()) {
+      for (let i = 0; i < 6; i++) {
+        pushVfx({
+          kind: "spark",
+          x: (wr.x + wf.x) * 0.5,
+          y: Math.min(wr.y, wf.y) - CFG.WHEEL_R * 0.5,
+          vx: (Math.random() - 0.5) * 3.2,
+          vy: 1.6 + Math.random() * 2.8,
+          life: 0.16 + Math.random() * 0.12,
+          age: 0,
+          r: 0.03
+        });
+      }
+    }
+  }
+  function spawnDebris(n) {
+    if (!car) return;
+    const src = car.chassis.getPosition();
+    const vel = car.chassis.getLinearVelocity();
+    const count = fxIsLow() ? Math.min(3, 2 + n) : Math.min(12, 4 + n * 3);
+    for (let i = 0; i < count; i++) {
+      pushVfx({
+        kind: "debris",
+        x: src.x + (Math.random() - 0.5) * 0.5,
+        y: src.y + 0.15 + Math.random() * 0.25,
+        vx: vel.x * 0.25 + (Math.random() - 0.5) * 2.4,
+        vy: vel.y * 0.2 + 1.1 + Math.random() * 2.2,
+        rot: Math.random() * 6.28,
+        rv: (Math.random() - 0.5) * 10,
+        life: 0.65 + Math.random() * 0.45,
+        age: 0,
+        r: 0.045 + Math.random() * 0.05,
+        tint: Math.random() > 0.45 ? "#c9a06a" : "#c45c36"
       });
     }
   }
@@ -1547,10 +1776,11 @@
       p.age += dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
-      p.vy += 0.4 * dt;
+      if (p.kind === "debris" || p.kind === "spark") p.vy -= 9 * dt;
+      else p.vy += 0.35 * dt;
+      if (p.rv) p.rot = (p.rot || 0) + p.rv * dt;
       if (p.age >= p.life) vfx.splice(i, 1);
     }
-    if (vfx.length > 40) vfx.splice(0, vfx.length - 40);
   }
 
   function drawVfx() {
@@ -1558,13 +1788,82 @@
       const p = vfx[i];
       const u = 1 - p.age / p.life;
       const cx = wx(p.x), cy = wy(p.y);
-      const rr = p.r * ppm * (0.7 + (1 - u) * 1.1);
+      if (p.kind === "spark") {
+        ctx.strokeStyle = "rgba(255,210,120," + (0.85 * u) + ")";
+        ctx.lineWidth = 1.4;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + p.vx * 4, cy - p.vy * 4);
+        ctx.stroke();
+        continue;
+      }
+      if (p.kind === "debris") {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(p.rot || 0);
+        const s = p.r * ppm * 2.2;
+        ctx.fillStyle = p.tint || "#c9a06a";
+        ctx.globalAlpha = 0.85 * u;
+        ctx.fillRect(-s * 0.5, -s * 0.3, s, s * 0.6);
+        ctx.restore();
+        continue;
+      }
+      const rr = p.r * ppm * (0.7 + (1 - u) * 1.15);
       ctx.beginPath();
       ctx.arc(cx, cy, rr, 0, Math.PI * 2);
-      if (p.kind === "exhaust") ctx.fillStyle = "rgba(70,66,62," + (0.28 * u) + ")";
-      else ctx.fillStyle = "rgba(170,130,80," + (0.30 * u) + ")";
+      if (p.kind === "exhaust") ctx.fillStyle = "rgba(70,66,62," + (0.26 * u) + ")";
+      else ctx.fillStyle = "rgba(186,142,88," + ((p.kind === "puff" ? 0.38 : 0.32) * u) + ")";
       ctx.fill();
     }
+  }
+  function drawSpeedLines() {
+    if (fxIsLow() || !car || st !== "play") return;
+    const v = car.chassis.getLinearVelocity();
+    const sp = Math.abs(v.x);
+    if (sp < 7) return;
+    const a = Math.min(0.20, (sp - 7) / 16 * 0.20);
+    const dir = v.x >= 0 ? 1 : -1;
+    const p = car.chassis.getPosition();
+    const cx = wx(p.x), cy = wy(p.y);
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,244,220," + a + ")";
+    ctx.lineWidth = 1.15;
+    ctx.lineCap = "round";
+    let seed = (Math.floor(tRun * 48) * 1103515245 + 12345) >>> 0;
+    function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+    const n = fxIsHigh() ? 11 : 6;
+    for (let i = 0; i < n; i++) {
+      const ox = (rnd() - 0.25) * 200 * -dir;
+      const oy = (rnd() - 0.5) * 78;
+      const len = 16 + rnd() * 34;
+      ctx.beginPath();
+      ctx.moveTo(cx + ox, cy + oy);
+      ctx.lineTo(cx + ox - dir * len, cy + oy);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function drawVignette() {
+    if (fxIsLow()) return;
+    const key = Math.round(viewW) + "x" + Math.round(viewH);
+    if (vignetteKey !== key || !vignetteCanvas) {
+      vignetteCanvas = document.createElement("canvas");
+      vignetteCanvas.width = Math.max(2, Math.round(viewW));
+      vignetteCanvas.height = Math.max(2, Math.round(viewH));
+      const g = vignetteCanvas.getContext("2d");
+      const cx = viewW * 0.5, cy = viewH * 0.42;
+      const inner = Math.min(viewW, viewH) * 0.38;
+      const outer = Math.max(viewW, viewH) * 0.74;
+      const grd = g.createRadialGradient(cx, cy, inner, cx, cy, outer);
+      grd.addColorStop(0, "rgba(40,24,12,0)");
+      grd.addColorStop(0.65, "rgba(40,24,12,0.035)");
+      grd.addColorStop(1, "rgba(28,16,8,0.24)");
+      g.fillStyle = grd;
+      g.fillRect(0, 0, viewW, viewH);
+      vignetteKey = key;
+    }
+    ctx.drawImage(vignetteCanvas, 0, 0, viewW, viewH);
   }
 
   function drawVehicle() {
@@ -1622,9 +1921,10 @@
       const b = shape.getVertex2 ? shape.getVertex2() : shape.m_vertex2;
       const p1 = xform(xf, a), p2 = xform(xf, b);
       ctx.beginPath(); ctx.moveTo(wx(p1.x), wy(p1.y)); ctx.lineTo(wx(p2.x), wy(p2.y));
-      ctx.lineWidth = 6; ctx.strokeStyle = palette.dirt; ctx.stroke();
-      ctx.strokeStyle = palette.grass; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(wx(p1.x), wy(p1.y) - 3); ctx.lineTo(wx(p2.x), wy(p2.y) - 3); ctx.stroke();
+      ctx.lineWidth = 7; ctx.strokeStyle = palette.dirt; ctx.stroke();
+      strokeGrassEdge(function () {
+        ctx.beginPath(); ctx.moveTo(wx(p1.x), wy(p1.y) - 2); ctx.lineTo(wx(p2.x), wy(p2.y) - 2);
+      });
     } else if (typ === "chain") {
       const n = shape.getVertexCount ? shape.getVertexCount() : (shape.m_vertices || []).length;
       if (n < 2) return;
@@ -1641,17 +1941,15 @@
       ctx.lineTo(wx(lp.x), viewH + 20);
       ctx.lineTo(wx(fp.x), viewH + 20);
       ctx.closePath();
-      ctx.fillStyle = palette.dirt;
-      ctx.fill();
-      ctx.strokeStyle = palette.grass;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      for (let i = 0; i < n; i++) {
-        const v = shape.getVertex ? shape.getVertex(i) : shape.m_vertices[i];
-        const p = xform(xf, v);
-        if (i === 0) ctx.moveTo(wx(p.x), wy(p.y)); else ctx.lineTo(wx(p.x), wy(p.y));
-      }
-      ctx.stroke();
+      fillWithDirt();
+      strokeGrassEdge(function () {
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const v = shape.getVertex ? shape.getVertex(i) : shape.m_vertices[i];
+          const p = xform(xf, v);
+          if (i === 0) ctx.moveTo(wx(p.x), wy(p.y)); else ctx.lineTo(wx(p.x), wy(p.y));
+        }
+      });
     } else {
       // polygon / box（planck 1.5 沒有 getVertexCount，用 m_vertices）
       const verts = shape.m_vertices || [];
@@ -1664,8 +1962,13 @@
         if (i === 0) ctx.moveTo(wx(p.x), wy(p.y)); else ctx.lineTo(wx(p.x), wy(p.y));
       }
       ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      if (isGround) fillWithDirt();
+      else { ctx.fill(); ctx.stroke(); }
+      if (isGround) {
+        ctx.strokeStyle = "rgba(90,58,28,0.35)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     }
   }
 
@@ -1706,10 +2009,15 @@
   }
 
   function draw() {
+    updateVisualZoom();
+    ctx.save();
+    if (shakeX || shakeY) ctx.translate(shakeX, shakeY);
     drawSky();
     if (!world) {
       ctx.fillStyle = palette.dirt;
       ctx.fillRect(0, viewH * 0.7, viewW, viewH);
+      ctx.restore();
+      drawVignette();
       return;
     }
     updateCam(CFG.TICK);
@@ -1717,6 +2025,9 @@
     drawFlag();
     for (let b = world.getBodyList(); b; b = b.getNext()) drawBody(b);
     drawVehicle();
+    drawSpeedLines();
+    ctx.restore();
+    drawVignette();
     if (DEBUG && car) {
       const p = car.chassis.getPosition();
       const v = car.chassis.getLinearVelocity();
@@ -1972,6 +2283,8 @@
     }
     syncPedals();
     tickGameAudio();
+    stepShake(frameDt);
+    tickFxQuality();
     draw();
     requestAnimationFrame(loop);
   }

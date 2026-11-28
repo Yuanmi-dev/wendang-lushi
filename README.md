@@ -22,7 +22,7 @@
 - `assets/audio/`：引擎迴圈、煞車、撞擊、落地、過關與點擊音效，以及一軌配樂迴圈（mp3／ogg）。
 - `vendor/planck.min.js`：本機打包的 [planck.js](https://github.com/shakiba/planck.js) 1.5.1（MIT，Box2D 的 JS 移植）。授權見 `vendor/planck.LICENSE.txt`。
 
-固定 60 Hz 模擬（`World.step`，速度迭代 8、位置迭代 3）。重力 9.81 m/s²。車輛有車體、可焊斷的車頂、前後輪的 WheelJoint（扭力、懸吊彈簧與阻尼、地面摩擦）；貨物以 WeldJoint 固定。關卡以手刻路段組合：平地、坡、跳台、蹺板、木橋、脆弱棧道、餘弦凹槽與圓丘。畫面含車體精靈與視差背景；音效用 Web Audio API，第一次點擊後解鎖，廣告期間會暫時靜音。
+固定 60 Hz 模擬（`World.step`，速度迭代 8、位置迭代 3）。重力 9.81 m/s²。車輛有車體、可焊斷的車頂、前後輪的 WheelJoint（扭力、懸吊彈簧與阻尼、地面摩擦）；貨物以 WeldJoint 固定。關卡以手刻路段組合：平地、坡、跳台、蹺板、木橋、脆弱棧道、餘弦凹槽與圓丘。畫面含車體精靈與視差背景，並有泥土紋理、草邊、影子高光、粒子與暗角；幀率不足時會自動降低特效。音效用 Web Audio API，第一次點擊後解鎖，廣告期間會暫時靜音。
 
 廣告採 Google Ad Placement API 預埋 `adBreak`／`adConfig`，寫法與白雞跳跳 v0.2 相同。尚無 publisher id；預設 `CFG.ADS_ENABLED` 為關閉。沒有廣告、被擋或回呼失敗時，遊戲會照常進行。
 
