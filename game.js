@@ -30,6 +30,7 @@
     BREAK_PART: 200,
     BREAK_CARGO: 55,
     BREAK_CARGO_IMPACT: 12, // 陶罐與車斗／地面的撞擊衝量，超過則碎
+    CARGO_FAIL_DELAY: 0.4, // 摔破／掉出後稍等再結算，讓破碎動畫看得到
     BREAK_PLANK: 55,
     KILL_Y: -8,
     GOAL_HOLD: 0.45,
@@ -672,7 +673,7 @@
       build: function (b) { b.pad(8).flat(4).bridge(14, 1.15).flat(8).goal(8); }
     },
     {
-      id: 7, name: "陶罐要穩", hint: "車斗裡有陶罐，顛簸或重刹都可能摔碎。慢即是快。",
+      id: 7, name: "陶罐要穩", hint: "車斗裡有陶罐，摔破或掉出去就失敗。顛簸或重刹都可能弄掉，慢即是快。",
       par3: 32, par2: 42, cargo: true,
       bot: [{ x: 0, v: 3.6 }, { x: 8, v: 4.2 }, { x: 16, v: 3.8 }, { x: 24, v: 4.5 }, { x: 34, v: 3.2 }, { x: 42, v: 1.6 }],
       build: function (b) {
@@ -717,7 +718,7 @@
       }
     },
     {
-      id: 12, name: "收工路試", hint: "綜合考試：坡、橋、缺口、貨物。零件要在、陶罐盡量保住。",
+      id: 12, name: "收工路試", hint: "綜合考試：坡、橋、缺口、貨物。零件要在；陶罐摔破或掉出去就失敗。",
       par3: 23, par2: 34, cargo: true,
       bot: [
         { x: 0, v: 4.5 }, { x: 10, v: 6.5 }, { x: 20, v: 5 }, { x: 30, v: 4.2 },
@@ -956,7 +957,7 @@
   let reversing = false, revHoldT = 0, revReady = false, brakePrev = false;
   let vfx = [];
   let camX = 0, camY = 1.2, camAx = 0.33, camAy = 0.56, result = null;
-  let brokenCount = 0, cargoLost = false;
+  let brokenCount = 0, cargoLost = false, cargoFailT = 0, cargoFailReason = "";
   let acc = 0, lastTs = 0;
   let inputAt = 0, motorAt = 0; // 延遲量測
   let fpsSamples = [], lastFpsTs = 0, fpsNow = 60;
@@ -1403,7 +1404,7 @@
     meta = b.finish();
     car = createCar(world, meta.spawn.x, meta.spawn.y, !!level.cargo);
     brokenCount = 0;
-    cargoLost = false;
+    cargoLost = false; cargoFailT = 0; cargoFailReason = "";
     tRun = 0; tGoal = 0; tOver = 0; tImmune = 0.9; result = null;
     camX = meta.spawn.x; camY = meta.spawn.y;
     gasHeld = false; brakeHeld = false;
@@ -1502,8 +1503,9 @@
   }
 
   function starCount(time, cargoOk, partsOk) {
-    if (time <= level.par3 && cargoOk && partsOk) return 3;
-    if (time <= level.par2 && cargoOk) return 2;
+    // 有貨物的關卡，沒保住陶罐就不能給星
+    if (level.cargo && !cargoOk) return 0;
+    if (time <= level.par3 && partsOk) return 3;
     if (time <= level.par2) return 2;
     return 1;
   }
@@ -1511,6 +1513,10 @@
   function finishRun(ok, reason) {
     if (st === "result") return;
     const cargoOk = !level.cargo || !cargoLost;
+    if (ok && !cargoOk) {
+      ok = false;
+      reason = cargoFailReason || "陶罐掉了";
+    }
     const partsOk = brokenCount === 0;
     const time = tRun;
     const stars = ok ? starCount(time, cargoOk, partsOk) : 0;
@@ -1568,21 +1574,19 @@
       brokenCount += n;
       spawnDebris(n);
       if (!botMode) playSfx("crash");
-      car.breakables.forEach(function (it) {
-        if (it.kind === "pot" && it.broken) cargoLost = true;
-      });
     }
-    // 貨物掉落判定：關節斷了，或離車斗太遠／過低
-    if (level.cargo) {
+    // 貨物掉落或摔破即失敗（稍等讓破碎動畫可見）
+    if (level && level.cargo && st === "play" && tImmune <= 0) {
+      let shattered = false, fallen = false;
       car.cargo.forEach(function (c) {
-        if (c.broken) cargoLost = true;
-        else {
-          const p = c.body.getPosition(), q = car.chassis.getPosition();
-          if (p.y < q.y - 1.6 || Math.hypot(p.x - q.x, p.y - q.y) > 3.2) {
-            cargoLost = true;
-          }
+        if (c.broken) { cargoLost = true; shattered = true; return; }
+        const p = c.body.getPosition(), q = car.chassis.getPosition();
+        if (p.y < q.y - 1.6 || Math.hypot(p.x - q.x, p.y - q.y) > 3.2) {
+          cargoLost = true;
+          fallen = true;
         }
       });
+      if (cargoLost) armCargoFail(shattered ? "陶罐摔破了" : "陶罐掉了");
     }
     if (st !== "play") return;
     tickImpactAudio();
@@ -1591,13 +1595,31 @@
       finishRun(false, "掉出跑道");
       return;
     }
-    if (inGoal() && chassisUpright()) {
+    if (cargoFailReason) {
+      cargoFailT -= dt;
+      if (cargoFailT <= 0) {
+        finishRun(false, cargoFailReason);
+        return;
+      }
+      tGoal = 0;
+    } else if (inGoal() && chassisUpright()) {
       tGoal += dt;
       if (tGoal >= CFG.GOAL_HOLD) finishRun(true, "穩當到達");
     } else {
       tGoal = 0;
     }
     if (tRun > 180) finishRun(false, "逾時");
+  }
+
+  function armCargoFail(reason) {
+    cargoLost = true;
+    if (cargoFailReason) return;
+    cargoFailReason = reason || "陶罐掉了";
+    cargoFailT = CFG.CARGO_FAIL_DELAY;
+    addShake(0.32);
+    spawnCargoFailFx();
+    // 摔破時 stepSim 已播過撞擊音；掉出車斗才在這裡補一次
+    if (!botMode && reason === "陶罐掉了") playSfx("crash");
   }
 
   function targetSpeed(x) {
@@ -2250,6 +2272,28 @@
           r: 0.03
         });
       }
+    }
+  }
+  function spawnCargoFailFx() {
+    const pot = car && car.cargo && car.cargo[0] && car.cargo[0].body;
+    const src = pot ? pot.getPosition() : (car ? car.chassis.getPosition() : { x: 0, y: 0 });
+    const vel = pot ? pot.getLinearVelocity() : { x: 0, y: 0 };
+    pushVfx({ kind: "shock", x: src.x, y: src.y, vx: 0, vy: 0, life: 0.45, age: 0, r: 0.3 });
+    const count = fxIsLow() ? 6 : 14;
+    for (let i = 0; i < count; i++) {
+      pushVfx({
+        kind: "debris",
+        x: src.x + (Math.random() - 0.5) * 0.35,
+        y: src.y + (Math.random() - 0.5) * 0.25,
+        vx: vel.x * 0.2 + (Math.random() - 0.5) * 3.2,
+        vy: vel.y * 0.2 + 1.4 + Math.random() * 2.8,
+        rot: Math.random() * 6.28,
+        rv: (Math.random() - 0.5) * 12,
+        life: 0.7 + Math.random() * 0.45,
+        age: 0,
+        r: 0.04 + Math.random() * 0.055,
+        tint: Math.random() > 0.4 ? "#c45c36" : "#7a2c14"
+      });
     }
   }
   function spawnDebris(n) {
