@@ -29,6 +29,7 @@
     BREAK_WHEEL_IMPACT: 95, // 輪子只在撞擊衝量過大時脫落，不用懸吊反力       // 輪軸反力超過此值（N，已乘 inv_dt 尺度）則脫落
     BREAK_PART: 200,
     BREAK_CARGO: 55,
+    BREAK_CARGO_IMPACT: 12, // 陶罐與車斗／地面的撞擊衝量，超過則碎
     BREAK_PLANK: 55,
     KILL_Y: -8,
     GOAL_HOLD: 0.45,
@@ -737,8 +738,12 @@
   function filterCar() {
     return { groupIndex: -1, categoryBits: CAT.CAR, maskBits: CAT.GROUND | CAT.PROP };
   }
+  function filterBed() {
+    // 只跟貨物碰撞；車身本體仍不與陶罐相交，避免斜蓋把罐子卡住
+    return { groupIndex: 0, categoryBits: CAT.CAR, maskBits: CAT.CARGO };
+  }
   function filterCargo() {
-    return { groupIndex: 0, categoryBits: CAT.CARGO, maskBits: CAT.GROUND | CAT.PROP | CAT.CARGO };
+    return { groupIndex: 0, categoryBits: CAT.CARGO, maskBits: CAT.GROUND | CAT.PROP | CAT.CARGO | CAT.CAR };
   }
 
   function createCar(world, x, y, withCargo) {
@@ -790,15 +795,41 @@
     const front = makeWheel(x + 0.8651538461538463, CFG.TORQUE_FRONT);
 
     const cargo = [];
+    let bed = null;
     if (withCargo) {
-      const pot = world.createBody({ type: "dynamic", position: { x: x + 0.55, y: y + 0.55 } });
-      const fxP = pot.createFixture({
-        shape: new pl.Circle(0.22),
-        density: 0.35, friction: 0.5, restitution: 0.02, filter: filterCargo()
+      // 車頭蓋上的淺車斗：平底與矮牆，小心開可保住，急加速／急煞／落地會滑動或跳出
+      bed = { cx: 0.50, floorY: 0.40, halfW: 0.34, floorH: 0.045, wallH: 0.24, wallT: 0.045 };
+      bed.floorTop = bed.floorY + bed.floorH;
+      const fdBed = { density: 0.4, friction: 0.48, restitution: 0.08, filter: filterBed() };
+      const fxFloor = chassis.createFixture({
+        shape: new pl.Box(bed.halfW, bed.floorH, { x: bed.cx, y: bed.floorY }, 0),
+        ...fdBed
       });
-      fxP.setUserData({ kind: "pot", color: palette.pot });
-      const j = world.createJoint(new pl.WeldJoint({ frequencyHz: 6, dampingRatio: 0.4 }, chassis, pot, pot.getPosition()));
-      cargo.push({ body: pot, joint: j, kind: "pot", broken: false, breakForce: CFG.BREAK_CARGO });
+      fxFloor.setUserData({ kind: "bed" });
+      const wallY = bed.floorTop + bed.wallH * 0.5;
+      const fxWallL = chassis.createFixture({
+        shape: new pl.Box(bed.wallT, bed.wallH * 0.5, { x: bed.cx - bed.halfW + bed.wallT, y: wallY }, 0),
+        ...fdBed
+      });
+      fxWallL.setUserData({ kind: "bed" });
+      const fxWallR = chassis.createFixture({
+        shape: new pl.Box(bed.wallT, bed.wallH * 0.5, { x: bed.cx + bed.halfW - bed.wallT, y: wallY }, 0),
+        ...fdBed
+      });
+      fxWallR.setUserData({ kind: "bed" });
+      const potR = 0.20;
+      const pot = world.createBody({
+        type: "dynamic",
+        position: { x: x + bed.cx, y: y + bed.floorTop + potR + 0.012 },
+        angularDamping: 0.32,
+        linearDamping: 0.04
+      });
+      const fxP = pot.createFixture({
+        shape: new pl.Circle(potR),
+        density: 0.7, friction: 0.4, restitution: 0.2, filter: filterCargo()
+      });
+      fxP.setUserData({ kind: "pot", color: palette.pot, breakImpulse: CFG.BREAK_CARGO_IMPACT });
+      cargo.push({ body: pot, joint: null, kind: "pot", broken: false, radius: potR, breakForce: CFG.BREAK_CARGO });
     }
 
     const breakables = [
@@ -808,7 +839,7 @@
     ].concat(cargo);
 
     return {
-      chassis: chassis, roof: roof, rear: rear, front: front, cargo: cargo, breakables: breakables,
+      chassis: chassis, roof: roof, rear: rear, front: front, cargo: cargo, bed: bed, breakables: breakables,
       gas: 0, brake: 0
     };
   }
@@ -1394,13 +1425,32 @@
       const fb = contact.getFixtureB();
       [fa, fb].forEach(function (fx) {
         const ud = fx && fx.getUserData && fx.getUserData();
-        if (ud && (ud.kind === "plank" || ud.kind === "wheel") && ud.breakImpulse && im > ud.breakImpulse) {
+        if (ud && (ud.kind === "plank" || ud.kind === "wheel" || ud.kind === "pot") && ud.breakImpulse && im > ud.breakImpulse) {
           ud._wantBreak = true;
         }
       });
     });
   }
 
+  function breakPendingCargo() {
+    if (!car || !car.cargo) return 0;
+    let n = 0;
+    for (let i = 0; i < car.cargo.length; i++) {
+      const item = car.cargo[i];
+      if (item.broken || !item.body) continue;
+      let hit = false;
+      for (let f = item.body.getFixtureList(); f; f = f.getNext()) {
+        const u = f.getUserData();
+        if (u && u._wantBreak) hit = true;
+      }
+      if (hit) {
+        item.broken = true;
+        cargoLost = true;
+        n++;
+      }
+    }
+    return n;
+  }
   function breakPendingWheels() {
     if (!car) return 0;
     let n = 0;
@@ -1512,7 +1562,8 @@
     if (tImmune > 0) tImmune = Math.max(0, tImmune - dt);
     if (tImmune <= 0) breakPendingPlanks();
     const nw = tImmune > 0 ? 0 : breakPendingWheels();
-    const n = (tImmune > 0 ? 0 : queueBreaks(world, car.breakables, 1 / dt)) + nw;
+    const np = tImmune > 0 ? 0 : breakPendingCargo();
+    const n = (tImmune > 0 ? 0 : queueBreaks(world, car.breakables, 1 / dt)) + nw + np;
     if (n) {
       brokenCount += n;
       spawnDebris(n);
@@ -1980,8 +2031,61 @@
     });
   }
 
-  function drawCargoPot(body) {
+  function drawCargoBed() {
+    if (!car || !car.bed) return;
+    const b = car.bed;
+    inBody(car.chassis, function () {
+      const x0 = b.cx - b.halfW, x1 = b.cx + b.halfW;
+      const y0 = b.floorY - b.floorH, y1 = b.floorTop;
+      ctx.fillStyle = "#6b4d32";
+      ctx.fillRect(x0, y0, x1 - x0, y1 - y0 + 0.01);
+      ctx.fillStyle = "#c4a06a";
+      ctx.fillRect(x0 + 0.015, y1 - 0.018, x1 - x0 - 0.03, 0.018);
+      ctx.strokeStyle = "rgba(40,24,12,0.5)";
+      ctx.lineWidth = 0.012;
+      for (let i = 1; i < 4; i++) {
+        const x = x0 + (x1 - x0) * (i / 4);
+        ctx.beginPath(); ctx.moveTo(x, y0 + 0.01); ctx.lineTo(x, y1); ctx.stroke();
+      }
+      const wy0 = b.floorTop, wy1 = b.floorTop + b.wallH;
+      ctx.fillStyle = "#8a6238";
+      ctx.fillRect(x0, wy0, b.wallT * 2.1, wy1 - wy0);
+      ctx.fillRect(x1 - b.wallT * 2.1, wy0, b.wallT * 2.1, wy1 - wy0);
+      ctx.fillStyle = "#e2c28a";
+      ctx.fillRect(x0, wy1 - 0.022, b.wallT * 2.1, 0.022);
+      ctx.fillRect(x1 - b.wallT * 2.1, wy1 - 0.022, b.wallT * 2.1, 0.022);
+    });
+  }
+  function drawCargoPot(item) {
+    const body = item && item.body ? item.body : item;
+    if (!body) return;
+    const broken = !!(item && item.broken);
     inBody(body, function () {
+      if (broken) {
+        // 碎裂後的殘片，仍跟身體一起滾
+        const shards = [
+          [-0.06, -0.02, 0.11, 0.08, -0.4],
+          [0.07, -0.04, 0.09, 0.07, 0.5],
+          [0.0, 0.08, 0.1, 0.07, 0.15],
+          [-0.1, 0.05, 0.07, 0.06, -0.8]
+        ];
+        for (let i = 0; i < shards.length; i++) {
+          const sh = shards[i];
+          ctx.save();
+          ctx.translate(sh[0], sh[1]);
+          ctx.rotate(sh[4]);
+          ctx.beginPath();
+          ctx.ellipse(0, 0, sh[2], sh[3], 0, 0, Math.PI * 2);
+          ctx.fillStyle = i % 2 ? "#a34722" : "#7a2c14";
+          ctx.fill();
+          ctx.restore();
+        }
+        return;
+      }
+      const av = body.getAngularVelocity ? body.getAngularVelocity() : 0;
+      const wobble = Math.max(-0.12, Math.min(0.12, av * 0.03));
+      ctx.rotate(wobble);
+
       // 陶罐：圓形碰撞，視覺畫成有罐口、肩線與束帶的陶甕，避免看起來像球
       ctx.beginPath();
       ctx.moveTo(-0.11, -0.18);
@@ -2336,9 +2440,10 @@
     if (car.front && car.front.body) drawBuggyWheel(car.front.body);
     drawSuspension();
     drawHull();
+    drawCargoBed();
     drawRoofPanel();
     if (car.cargo) {
-      car.cargo.forEach(function (c) { if (c && c.body) drawCargoPot(c.body); });
+      car.cargo.forEach(function (c) { if (c && c.body) drawCargoPot(c); });
     }
   }
 
@@ -2348,7 +2453,7 @@
       const ud = f.getUserData() || {};
       const shape = f.getShape();
       const kind = ud.kind || "";
-      if (kind === "chassis" || kind === "ballast" || kind === "wheel" || kind === "roof" || kind === "pot") {
+      if (kind === "chassis" || kind === "ballast" || kind === "wheel" || kind === "roof" || kind === "pot" || kind === "bed") {
         continue; // 車體改由 drawVehicle 繪製
       } else if (kind === "ground" || kind === "loop" || kind === "wall" || kind === "endwall" || kind === "bowl" || kind === "ring") {
         drawShape(shape, xf, kind === "endwall" ? palette.dirtDark : palette.dirt, true);
@@ -3124,6 +3229,14 @@
         gasStrength: gasStrength, brakeStrength: brakeStrength,
         gasSeg: pedalSegment(gasStrength), brakeSeg: pedalSegment(brakeStrength),
         broken: brokenCount, cargoLost: cargoLost, fps: fpsNow,
+        pot: (function () {
+          if (!car || !car.cargo || !car.cargo[0] || !car.cargo[0].body) return null;
+          const c = car.cargo[0];
+          const wp = c.body.getPosition();
+          const lp = car.chassis.getLocalPoint(wp);
+          const wv = c.body.getLinearVelocity();
+          return { x: wp.x, y: wp.y, lx: lp.x, ly: lp.y, vx: wv.x, vy: wv.y, ang: c.body.getAngle(), av: c.body.getAngularVelocity(), broken: !!c.broken };
+        })(),
         result: result, adsPaused: adsPaused, reversing: !!reversing,
         revReady: !!revReady, revHoldT: revHoldT,
         cam: camFraming()
