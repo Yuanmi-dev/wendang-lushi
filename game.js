@@ -971,70 +971,291 @@
     n = (n ^ (n >>> 13)) >>> 0;
     return n / 4294967296;
   }
-  function fillCrossSection(minSY) {
-    ctx.fillStyle = palette.dirt;
-    ctx.fill();
-    ctx.save();
-    ctx.clip();
-    const top = (minSY == null ? 0 : minSY);
-    const g = ctx.createLinearGradient(0, top - 8, 0, viewH);
-    g.addColorStop(0, "#e8c27a");
-    g.addColorStop(0.06, "#d59a55");
-    g.addColorStop(0.18, "#b06a38");
-    g.addColorStop(0.38, "#7a4322");
-    g.addColorStop(0.62, "#4a2414");
-    g.addColorStop(1, "#1a0c08");
-    ctx.fillStyle = g;
-    ctx.fillRect(-4, top - 12, viewW + 8, viewH - top + 24);
-    if (!fxIsLow()) {
-      const step = fxIsHigh() ? 16 : 26;
-      for (let i = 0, y = top + 14; y < viewH + 30; y += step, i++) {
-        ctx.beginPath();
-        ctx.moveTo(-16, y);
-        for (let x = -16; x <= viewW + 16; x += 20) {
-          const w = Math.sin((x + camX * ppm * 0.2) * 0.035 + i * 1.4) * (7 + (i % 3) * 3);
-          ctx.lineTo(x, y + w);
-        }
-        ctx.lineTo(viewW + 16, viewH + 40);
-        ctx.lineTo(-16, viewH + 40);
-        ctx.closePath();
-        ctx.fillStyle = (i % 2 === 0) ? "rgba(32,14,6,0.22)" : "rgba(210,150,80,0.10)";
-        ctx.fill();
-      }
-      const x0 = camX - viewW / ppm - 2;
-      const x1 = camX + viewW / ppm + 2;
-      const nRock = fxIsHigh() ? 28 : 16;
-      for (let i = 0; i < nRock; i++) {
-        const hx = x0 + hash01(1000 + i + Math.floor(camX)) * (x1 - x0);
-        const hy = hash01(2000 + i) * 0.55 + 0.2;
-        const sx = wx(hx);
-        const sy = top + (viewH - top) * hy;
-        if (sy < top + 18) continue;
-        ctx.beginPath();
-        ctx.ellipse(sx, sy, (0.18 + hash01(i + 9) * 0.28) * ppm, (0.10 + hash01(i + 11) * 0.16) * ppm, hash01(i + 3) * 0.8, 0, Math.PI * 2);
-        ctx.fillStyle = hash01(i + 5) > 0.5 ? "rgba(70,42,28,0.55)" : "rgba(120,80,50,0.4)";
-        ctx.fill();
-      }
-      if (fxIsHigh()) {
-        ctx.strokeStyle = "rgba(60,32,16,0.45)";
-        ctx.lineWidth = 1.4;
-        ctx.lineCap = "round";
-        for (let i = 0; i < 10; i++) {
-          const hx = x0 + hash01(4000 + i) * (x1 - x0);
-          const sy = top + 24 + hash01(4100 + i) * 70;
-          ctx.beginPath();
-          ctx.moveTo(wx(hx), sy);
-          ctx.quadraticCurveTo(wx(hx) + 18, sy + 22, wx(hx) - 8, sy + 46);
-          ctx.stroke();
+  function ensureDirtPattern() {
+    if (dirtPat) return dirtPat;
+    const s = 256;
+    const c = document.createElement("canvas");
+    c.width = s;
+    c.height = s;
+    const g = c.getContext("2d");
+    g.fillStyle = "#8d6238";
+    g.fillRect(0, 0, s, s);
+    function blob(x, y, r, color) {
+      for (let ox = -s; ox <= s; ox += s) {
+        for (let oy = -s; oy <= s; oy += s) {
+          g.beginPath();
+          g.ellipse(x + ox, y + oy, r, r * (0.65 + hash01((x + y + r) | 0) * 0.5), hash01((x * 3 + y) | 0) * 1.2, 0, Math.PI * 2);
+          g.fillStyle = color;
+          g.fill();
         }
       }
-    } else {
-      ctx.fillStyle = "rgba(30,14,8,0.35)";
-      ctx.fillRect(-4, Math.min(viewH, top + 80), viewW + 8, viewH);
     }
+    for (let i = 0; i < 240; i++) {
+      const x = hash01(i * 3 + 1) * s;
+      const y = hash01(i * 3 + 2) * s;
+      const r = 1.6 + hash01(i * 3 + 3) * 8;
+      const k = hash01(i * 7 + 4);
+      blob(x, y, r, k > 0.58 ? "rgba(52,28,12,0.24)" : "rgba(214,176,118,0.2)");
+    }
+    const img = g.getImageData(0, 0, s, s);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (hash01((i * 13) | 0) - 0.5) * 20;
+      d[i] = Math.max(0, Math.min(255, d[i] + n));
+      d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n * 0.88));
+      d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n * 0.7));
+    }
+    g.putImageData(img, 0, 0);
+    dirtTile = c;
+    dirtPat = ctx.createPattern(c, "repeat");
+    return dirtPat;
+  }
+  function applyDirtPattern(alpha) {
+    const pat = ensureDirtPattern();
+    if (!pat) return;
+    const tw = 256, th = 256;
+    const ox = -(((camX * ppm) % tw) + tw) % tw;
+    const oy = -(((camY * ppm) % th) + th) % th;
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.fillStyle = pat;
+    ctx.globalCompositeOperation = "multiply";
+    ctx.globalAlpha = alpha == null ? 0.3 : alpha;
+    ctx.fillRect(-tw, -th, viewW + tw * 2, viewH + th * 2 + 48);
     ctx.restore();
   }
-  function fillWithDirt() { fillCrossSection(0); }
+  function surfaceYAt(pts, x) {
+    if (!pts || pts.length < 2) return null;
+    if (x < pts[0].x || x > pts[pts.length - 1].x) return null;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      if (x < a.x || x > b.x) continue;
+      const t = b.x === a.x ? 0 : (x - a.x) / (b.x - a.x);
+      return a.y + (b.y - a.y) * t;
+    }
+    return pts[pts.length - 1].y;
+  }
+  function offsetSurface(pts, depthFn) {
+    const out = [];
+    for (let i = 0; i < pts.length; i++) {
+      const d = depthFn(pts[i].x, i);
+      out.push({ x: wx(pts[i].x), y: wy(pts[i].y - d) });
+    }
+    return out;
+  }
+  function tracePoly(arr) {
+    ctx.moveTo(arr[0].x, arr[0].y);
+    for (let i = 1; i < arr.length; i++) ctx.lineTo(arr[i].x, arr[i].y);
+  }
+  function fillBand(topArr, botArr, c0, c1) {
+    ctx.beginPath();
+    tracePoly(topArr);
+    for (let i = botArr.length - 1; i >= 0; i--) ctx.lineTo(botArr[i].x, botArr[i].y);
+    ctx.closePath();
+    const mid = (topArr.length * 0.5) | 0;
+    const g = ctx.createLinearGradient(0, topArr[mid].y, 0, botArr[mid].y);
+    g.addColorStop(0, c0);
+    g.addColorStop(1, c1);
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+  function wobbleDepth(x, base, layer) {
+    const amp = 0.07 + Math.min(0.16, base * 0.018);
+    const w = Math.sin(x * 1.12 + layer * 1.65) * amp
+      + Math.sin(x * 0.33 + layer * 0.7) * (amp * 1.35)
+      + (hash01(((x * 5 + layer * 17) * 10) | 0) - 0.5) * (amp * 0.9);
+    return Math.max(0, base + w);
+  }
+  function fillContourSection(pts) {
+    if (!pts || pts.length < 2) return;
+    const bottom = viewH + 48;
+    ctx.beginPath();
+    ctx.moveTo(wx(pts[0].x), wy(pts[0].y));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(wx(pts[i].x), wy(pts[i].y));
+    ctx.lineTo(wx(pts[pts.length - 1].x), bottom);
+    ctx.lineTo(wx(pts[0].x), bottom);
+    ctx.closePath();
+    ctx.save();
+    ctx.clip();
+    // 先鋪最深的暖褐色，避免底部出現空洞或死黑塊
+    ctx.fillStyle = "#3c2618";
+    ctx.fillRect(-8, -8, viewW + 16, viewH + 64);
+    const bands = fxIsLow()
+      ? [
+          { d0: 0, d1: 0.3, c0: "#e2c388", c1: "#d0a45c" },
+          { d0: 0.3, d1: 1.2, c0: "#c08a48", c1: "#8d552e" },
+          { d0: 1.2, d1: 3.2, c0: "#7a4a28", c1: "#5c3420" },
+          { d0: 3.2, d1: 6.5, c0: "#52301c", c1: "#422818" },
+          { d0: 6.5, d1: 80, c0: "#3f2618", c1: "#332014" }
+        ]
+      : [
+          { d0: 0, d1: 0.22, c0: "#ecd39a", c1: "#dcb56a" },
+          { d0: 0.22, d1: 0.62, c0: "#d6a45c", c1: "#c08644" },
+          { d0: 0.62, d1: 1.15, c0: "#b47c40", c1: "#9a632f" },
+          { d0: 1.15, d1: 1.85, c0: "#966034", c1: "#7e4c28" },
+          { d0: 1.85, d1: 2.7, c0: "#8a552e", c1: "#704226" },
+          { d0: 2.7, d1: 3.7, c0: "#7a4a28", c1: "#643c20" },
+          { d0: 3.7, d1: 5.0, c0: "#6b3e24", c1: "#57321c" },
+          { d0: 5.0, d1: 6.5, c0: "#5c3420", c1: "#4c2c1c" },
+          { d0: 6.5, d1: 8.4, c0: "#522e1c", c1: "#452818" },
+          { d0: 8.4, d1: 10.8, c0: "#4a2a1a", c1: "#3f2418" },
+          { d0: 10.8, d1: 80, c0: "#3f2418", c1: "#332016" }
+        ];
+    for (let i = 0; i < bands.length; i++) {
+      const b = bands[i];
+      const top = offsetSurface(pts, function (x) { return wobbleDepth(x, b.d0, i); });
+      const cap = b.d1 >= 40 ? 24 : b.d1;
+      const bot = offsetSurface(pts, function (x) { return wobbleDepth(x, cap, i + 1); });
+      if (b.d1 >= 40) {
+        for (let k = 0; k < bot.length; k++) bot[k].y = Math.max(bot[k].y, bottom);
+      }
+      fillBand(top, bot, b.c0, b.c1);
+      if (!fxIsLow() && i > 0) {
+        ctx.beginPath();
+        tracePoly(top);
+        ctx.strokeStyle = "rgba(48,24,10,0.36)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(220,180,110,0.12)";
+        ctx.lineWidth = 1.1;
+        ctx.stroke();
+      }
+    }
+    applyDirtPattern(fxIsLow() ? 0.18 : 0.32);
+    // 草唇下方的環境遮蔽，沿地表走
+    const aoTop = offsetSurface(pts, function () { return 0; });
+    const aoBot = offsetSurface(pts, function (x) { return 0.16 + hash01((x * 9) | 0) * 0.08; });
+    ctx.beginPath();
+    tracePoly(aoTop);
+    for (let i = aoBot.length - 1; i >= 0; i--) ctx.lineTo(aoBot[i].x, aoBot[i].y);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(40,22,10,0.32)";
+    ctx.fill();
+    if (!fxIsLow()) drawBuriedDetails(pts);
+    ctx.restore();
+  }
+  function drawBuriedDetails(pts) {
+    const x0 = Math.max(pts[0].x, camX - 2 - viewW / ppm);
+    const x1 = Math.min(pts[pts.length - 1].x, camX + 2 + viewW / ppm);
+    if (x1 <= x0) return;
+    const step = fxIsHigh() ? 0.62 : 0.95;
+    const gi0 = Math.floor(x0 / step);
+    const gi1 = Math.ceil(x1 / step);
+    for (let gi = gi0; gi <= gi1; gi++) {
+      const hx = gi * step + hash01(gi + 31) * step * 0.55;
+      const sy = surfaceYAt(pts, hx);
+      if (sy == null) continue;
+      const depth = 0.28 + hash01(gi + 71) * (fxIsHigh() ? 9.5 : 6.2);
+      const px = wx(hx), py = wy(sy - depth);
+      if (py < -20 || py > viewH + 20) continue;
+      const rx = (0.08 + hash01(gi + 9) * 0.22) * ppm;
+      const ry = rx * (0.55 + hash01(gi + 11) * 0.4);
+      ctx.beginPath();
+      ctx.ellipse(px, py, rx, ry, (hash01(gi + 3) - 0.5) * 1.1, 0, Math.PI * 2);
+      ctx.fillStyle = hash01(gi + 5) > 0.45 ? "rgba(72,44,28,0.7)" : "rgba(140,96,58,0.55)";
+      ctx.fill();
+      if (fxIsHigh()) {
+        ctx.beginPath();
+        ctx.ellipse(px - rx * 0.25, py - ry * 0.25, rx * 0.35, ry * 0.25, 0, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(230,200,150,0.22)";
+        ctx.fill();
+      }
+    }
+    if (!fxIsHigh()) return;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(70,40,20,0.5)";
+    ctx.lineWidth = 1.5;
+    const r0 = Math.floor(x0 / 1.7);
+    const r1 = Math.ceil(x1 / 1.7);
+    for (let gi = r0; gi <= r1; gi++) {
+      if (hash01(gi + 401) < 0.35) continue;
+      const hx = gi * 1.7 + hash01(gi + 90) * 0.6;
+      const sy = surfaceYAt(pts, hx);
+      if (sy == null) continue;
+      const px = wx(hx), py = wy(sy - 0.06);
+      const lean = (hash01(gi + 12) - 0.5) * 22;
+      const drop = (0.35 + hash01(gi + 14) * 0.45) * ppm;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.quadraticCurveTo(px + lean, py + drop * 0.45, px - lean * 0.4, py + drop);
+      ctx.stroke();
+      if (hash01(gi + 18) > 0.55) {
+        ctx.beginPath();
+        ctx.moveTo(px + lean * 0.35, py + drop * 0.4);
+        ctx.quadraticCurveTo(px + lean * 0.9, py + drop * 0.55, px + lean * 0.5, py + drop * 0.85);
+        ctx.stroke();
+      }
+    }
+    // 深處稀疏的化石或短管，沒有品牌
+    const f0 = Math.floor(x0 / 7.5);
+    const f1 = Math.ceil(x1 / 7.5);
+    for (let gi = f0; gi <= f1; gi++) {
+      if (hash01(gi + 801) < 0.55) continue;
+      const hx = gi * 7.5 + hash01(gi + 810) * 3;
+      const sy = surfaceYAt(pts, hx);
+      if (sy == null) continue;
+      const depth = 2.4 + hash01(gi + 820) * 4.5;
+      const px = wx(hx), py = wy(sy - depth);
+      if (py < 0 || py > viewH) continue;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate((hash01(gi + 830) - 0.5) * 1.2);
+      if (hash01(gi + 840) > 0.5) {
+        ctx.strokeStyle = "rgba(160,130,96,0.45)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 0.16 * ppm, 0.4, Math.PI * 2.2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(0, 0, 0.09 * ppm, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = "rgba(110,86,64,0.5)";
+        ctx.lineWidth = 3.2;
+        ctx.beginPath();
+        ctx.moveTo(-0.28 * ppm, 0);
+        ctx.lineTo(0.28 * ppm, 0);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(70,52,38,0.4)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-0.28 * ppm, -0.07 * ppm, 0.56 * ppm, 0.14 * ppm);
+      }
+      ctx.restore();
+    }
+  }
+  function drawTerrain() {
+    if (!meta || !meta.paths || !meta.paths.length) return;
+    for (let i = 0; i < meta.paths.length; i++) {
+      const pts = meta.paths[i];
+      if (!pts || pts.length < 2) continue;
+      fillContourSection(pts);
+      strokeGrassEdge(function () {
+        ctx.beginPath();
+        for (let k = 0; k < pts.length; k++) {
+          const x = wx(pts[k].x), y = wy(pts[k].y) - 2;
+          if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+      });
+      strokeGrassBlades(pts);
+    }
+  }
+  function drawMenuGround() {
+    const y0 = viewH * 0.62;
+    const pts = [];
+    const span = 28;
+    for (let i = 0; i <= 10; i++) {
+      const x = camX - 8 + span * (i / 10);
+      pts.push({ x: x, y: (viewH * camAy - y0) / ppm + camY + Math.sin(i * 0.7) * 0.25 });
+    }
+    fillContourSection(pts);
+    strokeGrassEdge(function () {
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+        const x = wx(pts[i].x), y = wy(pts[i].y) - 2;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+    });
+  }
   function strokeGrassEdge(drawTop) {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -1634,17 +1855,6 @@
     }
   }
 
-  function drawGroundFill() {
-    if (!meta) return;
-    // 在鏡頭下方鋪土
-    const y0 = wy(meta.endY != null ? Math.min(0, meta.endY) : 0);
-    const top = Math.min(viewH, y0);
-    ctx.beginPath();
-    ctx.rect(0, top, viewW, viewH - top + 2);
-    fillWithDirt();
-    ctx.fillStyle = "rgba(80,48,24,0.28)";
-    ctx.fillRect(0, Math.min(viewH, y0 + 18), viewW, viewH);
-  }
 
   function inBody(body, fn) {
     if (!body) return;
@@ -2168,48 +2378,21 @@
       const r = shape.getRadius();
       const p = xform(xf, shape.getVertex ? { x: 0, y: 0 } : (shape.m_p || { x: 0, y: 0 }));
       ctx.beginPath(); ctx.arc(wx(p.x), wy(p.y), r * ppm, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    } else if (typ === "edge") {
-      const a = shape.getVertex1 ? shape.getVertex1() : shape.m_vertex1;
-      const b = shape.getVertex2 ? shape.getVertex2() : shape.m_vertex2;
-      const p1 = xform(xf, a), p2 = xform(xf, b);
-      ctx.beginPath();
-      ctx.moveTo(wx(p1.x), wy(p1.y));
-      ctx.lineTo(wx(p2.x), wy(p2.y));
-      ctx.lineTo(wx(p2.x), viewH + 24);
-      ctx.lineTo(wx(p1.x), viewH + 24);
-      ctx.closePath();
-      fillCrossSection(Math.min(wy(p1.y), wy(p2.y)));
-      strokeGrassEdge(function () {
-        ctx.beginPath(); ctx.moveTo(wx(p1.x), wy(p1.y) - 2); ctx.lineTo(wx(p2.x), wy(p2.y) - 2);
-      });
-      strokeGrassBlades([p1, p2]);
-    } else if (typ === "chain") {
-      const n = shape.getVertexCount ? shape.getVertexCount() : (shape.m_vertices || []).length;
+    } else if (typ === "edge" || typ === "chain") {
+      // 地面剖面改由 drawTerrain 依路徑連續繪製，這裡略過以免重疊出接縫
+      if (isGround) return;
+      const n = typ === "edge" ? 2 : (shape.getVertexCount ? shape.getVertexCount() : (shape.m_vertices || []).length);
       if (n < 2) return;
-      const worldPts = [];
-      let minSY = viewH;
       ctx.beginPath();
       for (let i = 0; i < n; i++) {
-        const v = shape.getVertex ? shape.getVertex(i) : shape.m_vertices[i];
+        const v = typ === "edge"
+          ? (i === 0 ? (shape.getVertex1 ? shape.getVertex1() : shape.m_vertex1) : (shape.getVertex2 ? shape.getVertex2() : shape.m_vertex2))
+          : (shape.getVertex ? shape.getVertex(i) : shape.m_vertices[i]);
         const p = xform(xf, v);
-        worldPts.push(p);
-        const sy = wy(p.y);
-        if (sy < minSY) minSY = sy;
-        if (i === 0) ctx.moveTo(wx(p.x), sy); else ctx.lineTo(wx(p.x), sy);
+        if (i === 0) ctx.moveTo(wx(p.x), wy(p.y));
+        else ctx.lineTo(wx(p.x), wy(p.y));
       }
-      const lp = worldPts[n - 1], fp = worldPts[0];
-      ctx.lineTo(wx(lp.x), viewH + 24);
-      ctx.lineTo(wx(fp.x), viewH + 24);
-      ctx.closePath();
-      fillCrossSection(minSY);
-      strokeGrassEdge(function () {
-        ctx.beginPath();
-        for (let i = 0; i < n; i++) {
-          const p = worldPts[i];
-          if (i === 0) ctx.moveTo(wx(p.x), wy(p.y)); else ctx.lineTo(wx(p.x), wy(p.y));
-        }
-      });
-      strokeGrassBlades(worldPts);
+      ctx.stroke();
     } else {
       // polygon / box（planck 1.5 沒有 getVertexCount，用 m_vertices）
       const verts = shape.m_vertices || [];
@@ -2222,11 +2405,22 @@
         if (i === 0) ctx.moveTo(wx(p.x), wy(p.y)); else ctx.lineTo(wx(p.x), wy(p.y));
       }
       ctx.closePath();
-      if (isGround) fillCrossSection(0);
-      else { ctx.fill(); ctx.stroke(); }
       if (isGround) {
-        ctx.strokeStyle = "rgba(90,58,28,0.35)";
+        ctx.save();
+        ctx.clip();
+        const g = ctx.createLinearGradient(0, 0, 0, viewH);
+        g.addColorStop(0, "#d6a45c");
+        g.addColorStop(0.45, "#8a552e");
+        g.addColorStop(1, "#4a2c1a");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, viewW, viewH);
+        applyDirtPattern(0.22);
+        ctx.restore();
+        ctx.strokeStyle = "rgba(90,58,28,0.4)";
         ctx.lineWidth = 2;
+        ctx.stroke();
+      } else {
+        ctx.fill();
         ctx.stroke();
       }
     }
@@ -2393,15 +2587,13 @@
     if (shakeX || shakeY) ctx.translate(shakeX, shakeY);
     drawSky();
     if (!world) {
-      ctx.beginPath();
-      ctx.rect(0, viewH * 0.68, viewW, viewH);
-      fillCrossSection(viewH * 0.68);
+      drawMenuGround();
       ctx.restore();
       drawVignette();
       return;
     }
     updateCam(CFG.TICK);
-    drawGroundFill();
+    drawTerrain();
     drawRoadsideProps();
     drawFlag();
     for (let b = world.getBodyList(); b; b = b.getNext()) drawBody(b);
