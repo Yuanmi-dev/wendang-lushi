@@ -18,12 +18,14 @@
 <style>
   html,body{
     margin:0;width:100%;height:100%;height:100dvh;background:#e8c9a0;overflow:hidden;
-    font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;
+    font-family:"PingFang TC","Noto Sans CJK TC","Noto Sans CJK","Noto Sans TC","Noto Sans","Microsoft JhengHei",sans-serif;
     touch-action:none;user-select:none;-webkit-user-select:none;
     -webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;
     overscroll-behavior:none;position:fixed;inset:0;color:#2b241c;
   }
   #wrap{position:fixed;inset:0;width:100%;height:100%;height:100dvh;background:#e8c9a0;}
+
+  html.promo #hud,html.promo #controls,html.promo #hintBar,html.promo #count,html.promo .hudBtns{display:none !important;}
   canvas{display:block;width:100%;height:100%;touch-action:none;background:#e8c9a0;}
   button{font-family:inherit;touch-action:manipulation;-webkit-user-select:none;user-select:none;}
   #hud{
