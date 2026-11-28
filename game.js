@@ -526,25 +526,98 @@
         return api;
       },
       drop(dy) { y += dy; return api; },
-      seesaw(len, thick) {
+      seesaw(len, thick, opts) {
+        if (opts === true) opts = { tippy: true };
+        opts = opts || {};
         flush();
         const L = len || 7, tck = thick || 0.2;
+        const tippy = !!opts.tippy;
+        const lim = (opts.limit != null ? opts.limit : (tippy ? 24 : 10)) * Math.PI / 180;
+        if (tippy) {
+          // 近端短托，避免板一壓就在入口卡死
+          pts.push({ x: x, y: y });
+          pts.push({ x: x + 0.62, y: y });
+          flush();
+        }
         // 板心貼齊路面，前端落差約一個板厚，讓低底盤也能開上去
         const cx = x + L * 0.5, cy = y;
         const board = world.createBody({ type: "dynamic", position: { x: cx, y: cy } });
-        const fx = board.createFixture({ shape: new pl.Box(L * 0.5, tck), density: 0.9, friction: 0.85, filterCategoryBits: CAT.PROP, filterMaskBits: 0xffff });
+        const fx = board.createFixture({ shape: new pl.Box(L * 0.5, tck), density: tippy ? 0.7 : 0.9, friction: 0.85, filterCategoryBits: CAT.PROP, filterMaskBits: 0xffff });
         fx.setUserData({ kind: "seesaw" });
         const j = world.createJoint(new pl.RevoluteJoint({
-          lowerAngle: (-10 * Math.PI) / 180,
-          upperAngle: (10 * Math.PI) / 180,
+          lowerAngle: -lim,
+          upperAngle: lim,
           enableLimit: true
         }, groundBody, board, { x: cx, y: cy }));
         props.push({ kind: "seesaw", body: board, joint: j });
-        // 板端後方緩坡承接，落差小以免撞擊拆輪
         x += L + 0.2;
-        pts.push({ x: x, y: y - 0.28 });
-        pts.push({ x: x + 4.0, y: y });
-        x = x + 4.0;
+        if (tippy) {
+          // 板端重疊一段緩坡，再接淺凹：慢過可落地，衝太快會被掀飛
+          pts.push({ x: x - 0.25, y: y - 0.24 });
+          pts.push({ x: x + 1.8, y: y - 0.06 });
+          pts.push({ x: x + 4.6, y: y });
+          x += 4.6;
+          push(x + 1.5, y - 0.40);
+          push(x + 3.0, y);
+          x += 3.0;
+        } else {
+          // 板端後方緩坡承接，落差小以免撞擊拆輪
+          pts.push({ x: x, y: y - 0.28 });
+          pts.push({ x: x + 4.0, y: y });
+          x = x + 4.0;
+        }
+        return api;
+      },
+      // 短著陸的跳躍：全速會飛出著陸帶掉進坑
+      leap(gapW, h, landLen) {
+        const H = h == null ? 0.5 : h;
+        const take = 3.0;
+        const land = landLen == null ? 5.2 : landLen;
+        const baseY = y;
+        push(x + take, baseY + H);
+        flush();
+        x += (gapW == null ? 1.8 : gapW);
+        const landY = baseY + H;
+        pts.push({ x: x, y: landY - 0.12 });
+        pts.push({ x: x + Math.min(1.3, land * 0.35), y: landY });
+        pts.push({ x: x + land, y: landY });
+        x = x + land; y = landY;
+        // 連續淺凹：慢速可開過去，全速落地不穩或被拋離
+        const dip = 0.40, dw = 3.0;
+        push(x + dw * 0.5, landY - dip);
+        push(x + dw, landY);
+        x = x + dw; y = landY;
+        return api;
+      },
+      // 圓丘，過快會在坡頂被拋出去；可接一個坑
+      crest(w, h, pit) {
+        const W = w == null ? 8 : w;
+        const H = h == null ? 1.4 : h;
+        const x0 = x, y0 = y, n = 18;
+        for (let i = 1; i <= n; i++) {
+          const u = i / n;
+          push(x0 + W * u, y0 + H * 0.5 * (1 - Math.cos(Math.PI * 2 * u)));
+        }
+        if (pit) {
+          flush();
+          x += pit;
+          pts.push({ x: x, y: y0 - 0.22 });
+          pts.push({ x: x + 3.4, y: y0 });
+          x += 3.4; y = y0;
+        }
+        return api;
+      },
+      // 顛簸路段
+      rough(len, amp, n) {
+        const L = len == null ? 10 : len;
+        const A = amp == null ? 0.28 : amp;
+        const count = n || 6;
+        const x0 = x, y0 = y, step = L / count;
+        for (let i = 1; i <= count; i++) {
+          push(x0 + step * (i - 0.5), y0 + A);
+          push(x0 + step * i, y0);
+        }
+        y = y0;
         return api;
       },
       bridge(n, seg) {
@@ -643,6 +716,17 @@
         end.setUserData({ kind: "endwall" });
         return api;
       },
+      // 旗門區要減速停住；衝過頭會掉出斷崖
+      goalStop(zoneW, maxVx) {
+        const zw = zoneW == null ? 5.2 : zoneW;
+        const gx = x + 0.7;
+        push(x + zw + 0.4, y);
+        goal = { x: gx, y: y, w: zw, h: 3.6, stop: true, maxVx: maxVx == null ? 3.0 : maxVx };
+        killY = Math.min(killY, y - 8);
+        flush();
+        x += 3.8;
+        return api;
+      },
       finish() { flush(); return { spawn: spawn, goal: goal, killY: killY, ground: groundBody, props: props, paths: paths, endX: x, endY: y }; }
     };
     return api;
@@ -650,100 +734,119 @@
 
   const LEVELS = [
     {
-      id: 1, name: "場地熱身", hint: "輕踩油門，到旗門前緩緩煞車。",
-      par3: 15, par2: 22, cargo: false,
-      bot: [{ x: 0, v: 4.2 }, { x: 8, v: 5.5 }, { x: 18, v: 3.2 }, { x: 24, v: 1.2 }],
-      build: function (b) { b.pad(8).flat(18).goal(8); }
-    },
-    {
-      id: 2, name: "緩坡來回", hint: "上坡多給一點油，下坡先收。",
-      par3: 15, par2: 22, cargo: false,
-      bot: [{ x: 0, v: 5 }, { x: 10, v: 7 }, { x: 22, v: 5 }, { x: 34, v: 6.5 }, { x: 46, v: 2 }],
-      build: function (b) {
-        b.pad(8).slope(8, 2.2).flat(4).slope(8, -2.2).flat(5).slope(6, 1.4).slope(6, -1.4).flat(4).goal(8);
-      }
-    },
-    {
-      id: 3, name: "小缺口", hint: "缺口前穩穩加速，落地再收油。",
-      par3: 11, par2: 18, cargo: false,
-      bot: [{ x: 0, v: 5 }, { x: 10, v: 7.4 }, { x: 16, v: 7.8 }, { x: 24, v: 4 }, { x: 32, v: 2 }],
-      build: function (b) { b.pad(8).flat(6).jump(2.2, 0.65).flat(12).goal(8); }
-    },
-    {
-      id: 4, name: "獨木晃板", hint: "上蹺板時少踩油門，讓板自己轉。",
-      par3: 14, par2: 22, cargo: false,
-      bot: [{ x: 0, v: 4.2 }, { x: 10, v: 3.8 }, { x: 14, v: 3.3 }, { x: 20, v: 3.5 }, { x: 28, v: 4 }, { x: 34, v: 2 }],
-      build: function (b) { b.pad(8).flat(4).seesaw(7).flat(10).goal(8); }
-    },
-    {
-      id: 5, name: "陡坡別翻", hint: "爬坡要持續給油，但別一開始就踩死，免得後輪翹起。",
-      par3: 15, par2: 22, cargo: false,
-      bot: [{ x: 0, v: 5 }, { x: 8, v: 7 }, { x: 16, v: 8 }, { x: 26, v: 6 }, { x: 32, v: 4.2 }, { x: 46, v: 3.8 }, { x: 56, v: 2 }],
-      build: function (b) {
-        b.pad(8).flat(4).slope(14, 4.2).flat(6).slope(14, -2.6).flat(6).goal(8);
-      }
-    },
-    {
-      id: 6, name: "細橋慢過", hint: "木橋會搖，保持中等車速，不要在橋上急煞。",
+      id: 1, name: "場地熱身", hint: "輕踩油門，到旗門前緩緩煞車。衝過頭會掉出斷崖。",
       par3: 13, par2: 20, cargo: false,
-      bot: [{ x: 0, v: 4.2 }, { x: 8, v: 4.8 }, { x: 14, v: 4.4 }, { x: 28, v: 4.6 }, { x: 36, v: 2 }],
-      build: function (b) { b.pad(8).flat(4).bridge(14, 1.15).flat(8).goal(8); }
+      bot: [{ x: 0, v: 4.6 }, { x: 12, v: 5.4 }, { x: 22, v: 4.2 }, { x: 30, v: 1.2 }],
+      build: function (b) { b.pad(8).flat(16).flat(6).goalStop(5.4); }
+    },
+    {
+      id: 2, name: "緩坡來回", hint: "上坡多給一點油，下坡先收。谷底太快會衝不上對向斜坡，甚至飛出去。",
+      par3: 19, par2: 28, cargo: false,
+      bot: [{ x: 0, v: 4.8 }, { x: 10, v: 6.4 }, { x: 20, v: 4.2 }, { x: 28, v: 3.2 }, { x: 36, v: 5.2 }, { x: 48, v: 2.2 }, { x: 56, v: 1.1 }],
+      build: function (b) {
+        b.pad(8).slope(8, 2.2).flat(3).slope(7, -2.6).flat(2.0).slope(5.5, 2.0).flat(4)
+          .slope(6, -1.3).flat(7).goalStop(5.2);
+      }
+    },
+    {
+      id: 3, name: "小缺口", hint: "缺口前穩穩加速，落地再收油。全速會飛出過短的著陸帶。",
+      par3: 18, par2: 27, cargo: false,
+      bot: [{ x: 0, v: 5.0 }, { x: 10, v: 7.2 }, { x: 16, v: 7.6 }, { x: 22, v: 3.6 }, { x: 30, v: 3.4 }, { x: 42, v: 1.2 }],
+      build: function (b) { b.pad(8).flat(7).leap(2.15, 0.62, 7.0).flat(7).goalStop(5.2); }
+    },
+    {
+      id: 4, name: "獨木晃板", hint: "上蹺板時少踩油門，讓板自己轉。衝過去會把板掀翻或飛出旗門。",
+      par3: 24, par2: 34, cargo: false,
+      bot: [{ x: 0, v: 4.2 }, { x: 10, v: 3.8 }, { x: 14, v: 3.6 }, { x: 22, v: 3.4 }, { x: 34, v: 2.2 }, { x: 44, v: 1.2 }],
+      build: function (b) { b.pad(8).flat(5).seesaw(7, 0.2, { tippy: true, limit: 16 }).slope(1.5, -0.35).slope(1.5, 0.35).flat(8).goalStop(5.2); }
+    },
+    {
+      id: 5, name: "陡坡別翻", hint: "爬坡要持續給油，但別一開始就踩死，免得後輪翹起。坡頂太快會被拋出去。",
+      par3: 25, par2: 35, cargo: false,
+      bot: [
+        { x: 0, v: 4.4 }, { x: 8, v: 5.4 }, { x: 16, v: 5.8 }, { x: 24, v: 3.4 },
+        { x: 32, v: 2.8 }, { x: 44, v: 3.4 }, { x: 58, v: 2.4 }, { x: 72, v: 1.2 }
+      ],
+      build: function (b) {
+        b.pad(8).flat(3).slope(11, 4.4).flat(3).crest(8, 1.35, 0).flat(3)
+          .slope(9, -3.0).flat(2.0).slope(6, 2.0).flat(7).goalStop(5.2);
+      }
+    },
+    {
+      id: 6, name: "細橋慢過", hint: "木橋會搖，保持中等車速，不要在橋上急煞或衝刺。",
+      par3: 19, par2: 28, cargo: false,
+      bot: [{ x: 0, v: 3.8 }, { x: 8, v: 4.2 }, { x: 16, v: 3.6 }, { x: 30, v: 3.8 }, { x: 42, v: 2.0 }, { x: 50, v: 1.1 }],
+      build: function (b) {
+        b.pad(8).flat(3).slope(4, 0.7).slope(4, -0.7).bridge(16, 1.05).flat(8).goalStop(5.2);
+      }
     },
     {
       id: 7, name: "陶罐要穩", hint: "車斗裡有陶罐，摔破或掉出去就失敗。顛簸或重刹都可能弄掉，慢即是快。",
-      par3: 32, par2: 42, cargo: true,
-      bot: [{ x: 0, v: 3.6 }, { x: 8, v: 4.2 }, { x: 16, v: 3.8 }, { x: 24, v: 4.5 }, { x: 34, v: 3.2 }, { x: 42, v: 1.6 }],
+      par3: 50, par2: 64, cargo: true,
+      bot: [
+        { x: 0, v: 3.2 }, { x: 8, v: 3.6 }, { x: 18, v: 3.4 }, { x: 28, v: 3.2 },
+        { x: 40, v: 3.0 }, { x: 52, v: 2.2 }, { x: 64, v: 1.2 }
+      ],
       build: function (b) {
-        b.pad(8).flat(6).bump(5, 0.7).flat(5).slope(6, 1.1).slope(6, -1.1).flat(6).bump(4, 0.45).flat(6).goal(8);
+        b.pad(8).flat(5).rough(11, 0.30, 6).flat(4).slope(5, 1.05).slope(5, -1.05)
+          .flat(3).bump(4.2, 0.85).flat(4).bump(4, 0.70).flat(3).bump(3.6, 0.80).flat(5).goalStop(5.6, 3.4);
       }
     },
     {
-      id: 8, name: "連續跳台", hint: "每個缺口前加速，落地先鬆開油門再準備下一次。",
-      par3: 13, par2: 20, cargo: false,
+      id: 8, name: "連續跳台", hint: "兩個缺口前先加速，落地收油，旗門前煞車。著陸帶很短，全速會飛出去。",
+      par3: 27, par2: 38, cargo: false,
       bot: [
-        { x: 0, v: 5 }, { x: 10, v: 7.2 }, { x: 16, v: 7.6 }, { x: 24, v: 6.8 },
-        { x: 30, v: 7.6 }, { x: 38, v: 6.8 }, { x: 44, v: 7.6 }, { x: 56, v: 3 }
+        { x: 0, v: 5.0 }, { x: 12, v: 7.0 }, { x: 16, v: 7.3 }, { x: 22, v: 3.2 },
+        { x: 32, v: 7.2 }, { x: 38, v: 7.3 }, { x: 48, v: 3.2 }, { x: 62, v: 1.2 }
       ],
       build: function (b) {
-        b.pad(8).flat(5).jump(1.7, 0.48).flat(5).jump(1.8, 0.5).flat(5).jump(1.8, 0.52).flat(10).goal(8);
+        b.pad(8).flat(5).leap(1.80, 0.48, 7.2).flat(5).leap(1.85, 0.50, 7.2).flat(8).goalStop(5.2);
       }
     },
     {
-      id: 9, name: "環形坡道", hint: "先過環形凹槽再爬圓丘，坡頂別猛加油免得翹輪。",
-      par3: 15, par2: 24, cargo: false,
+      id: 9, name: "環形坡道", hint: "先過環形凹槽再爬圓丘，坡頂別猛加油免得翹輪或被拋出著陸帶。",
+      par3: 25, par2: 36, cargo: false,
       bot: [
-        { x: 0, v: 4.8 }, { x: 12, v: 6 }, { x: 22, v: 6.2 }, { x: 32, v: 5.8 },
-        { x: 42, v: 7.2 }, { x: 54, v: 6.2 }, { x: 68, v: 3.5 }, { x: 80, v: 2 }
+        { x: 0, v: 4.4 }, { x: 12, v: 5.2 }, { x: 22, v: 4.8 }, { x: 34, v: 5.0 },
+        { x: 46, v: 5.0 }, { x: 54, v: 2.6 }, { x: 66, v: 2.2 }, { x: 80, v: 1.2 }
       ],
-      build: function (b) { b.pad(10).flat(8).bowl(14, 1.3).flat(6).ring(16, 2.2).flat(10).goal(8); }
+      build: function (b) {
+        b.pad(10).flat(6).bowl(14, 1.55).flat(5).ring(16, 2.5).flat(5)
+          .slope(1.5, -0.40).slope(1.5, 0.40).flat(8).goalStop(5.2);
+      }
     },
     {
       id: 10, name: "脆弱棧道", hint: "木板承受不了重擊。慢慢開過去，墜下去就得重來。",
-      par3: 13, par2: 20, cargo: false,
-      bot: [{ x: 0, v: 3.8 }, { x: 8, v: 3.4 }, { x: 16, v: 3.2 }, { x: 26, v: 3.4 }, { x: 34, v: 2 }],
-      build: function (b) { b.pad(8).flat(3).planks(8, 1.45).flat(8).goal(8); }
-    },
-    {
-      id: 11, name: "連串蹺板", hint: "連續蹺板像走路，一張一張過，不要加速衝。",
-      par3: 20, par2: 30, cargo: false,
-      bot: [
-        { x: 0, v: 3.8 }, { x: 10, v: 3.4 }, { x: 20, v: 4.4 }, { x: 26, v: 4.2 }, { x: 32, v: 3.6 },
-        { x: 44, v: 3.3 }, { x: 56, v: 3.6 }, { x: 66, v: 5.0 }, { x: 76, v: 2 }
-      ],
+      par3: 22, par2: 32, cargo: false,
+      bot: [{ x: 0, v: 3.2 }, { x: 8, v: 3.0 }, { x: 16, v: 2.6 }, { x: 28, v: 2.8 }, { x: 38, v: 1.8 }, { x: 48, v: 1.1 }],
       build: function (b) {
-        b.pad(8).flat(4).seesaw(6).flat(5).seesaw(6).flat(12).goal(8);
+        b.pad(8).flat(3).slope(4, 0.7).slope(3.2, -0.85).planks(9, 1.35).flat(8).goalStop(5.2);
       }
     },
     {
-      id: 12, name: "收工路試", hint: "綜合考試：坡、橋、缺口、貨物。零件要在；陶罐摔破或掉出去就失敗。",
-      par3: 23, par2: 34, cargo: true,
+      id: 11, name: "連串蹺板", hint: "連續蹺板像走路，一張一張過，不要加速衝。",
+      par3: 37, par2: 50, cargo: false,
       bot: [
-        { x: 0, v: 4.5 }, { x: 10, v: 6.5 }, { x: 20, v: 5 }, { x: 30, v: 4.2 },
-        { x: 42, v: 4.6 }, { x: 52, v: 7.8 }, { x: 62, v: 5 }, { x: 72, v: 2.2 }
+        { x: 0, v: 4.0 }, { x: 10, v: 3.8 }, { x: 20, v: 3.6 }, { x: 32, v: 3.6 },
+        { x: 46, v: 3.6 }, { x: 60, v: 3.6 }, { x: 74, v: 2.2 }, { x: 86, v: 1.2 }
       ],
       build: function (b) {
-        b.pad(8).flat(4).slope(8, 2.6).flat(3).slope(6, -2.0).flat(3).bridge(8, 1.1).flat(4)
-          .jump(2.1, 0.65).flat(8).bump(5, 0.5).flat(6).goal(8);
+        b.pad(8).flat(4).seesaw(6, 0.2, { tippy: true, limit: 16 }).flat(4)
+          .seesaw(6, 0.2, { tippy: true, limit: 16 }).flat(4)
+          .seesaw(6.5, 0.2, { tippy: true, limit: 16 }).flat(8).goalStop(5.2);
+      }
+    },
+    {
+      id: 12, name: "收工路試", hint: "綜合考試：坡、橋、缺口、貨物。零件要在；陶罐摔破或掉出去就失敗。旗門前記得煞車。",
+      par3: 51, par2: 66, cargo: true,
+      bot: [
+        { x: 0, v: 3.8 }, { x: 10, v: 5.0 }, { x: 20, v: 3.6 }, { x: 32, v: 3.8 },
+        { x: 42, v: 7.2 }, { x: 52, v: 3.0 }, { x: 64, v: 2.6 }, { x: 80, v: 1.2 }
+      ],
+      build: function (b) {
+        b.pad(8).flat(4).slope(7, 2.3).flat(2.2).slope(6, -2.3).flat(3)
+          .bridge(8, 1.1).flat(4).leap(1.85, 0.52, 7.0).flat(3)
+          .bump(4.2, 0.55).flat(3).bump(4, 0.5).flat(8).goalStop(5.6, 3.4);
       }
     }
   ];
@@ -980,7 +1083,9 @@
     else zone = "side";
     const over = im - CFG.DMG_I0;
     if (over <= 0) return;
-    const amount = Math.pow(Math.min(1, over / CFG.DMG_ISPAN), 1.2) * 0.69;
+    let amount = Math.pow(Math.min(1, over / CFG.DMG_ISPAN), 1.2) * 0.69;
+    const vy = car.chassis.getLinearVelocity().y;
+    if (vy < -3.8) amount *= 1.35;
     addZoneDamage(zone, amount, tRun);
     if (zone === "front" && amount > 0.08) addZoneDamage("engine", amount * 0.4, tRun);
     if (zone === "side") addZoneDamage(lp.x > 0 ? "suspF" : "suspR", amount * 0.25, tRun);
@@ -1538,7 +1643,7 @@
   let acc = 0, lastTs = 0;
   let inputAt = 0, motorAt = 0; // 延遲量測
   let fpsSamples = [], lastFpsTs = 0, fpsNow = 60;
-  let botMode = false;
+  let botMode = false, botStyle = "skilled";
   let fxQuality = "high", fxAuto = !PROMO, fxLowStreak = 0;
   let basePpm = 42, camZoom = 1;
   let shakeAmp = 0, shakePhase = 0, shakeX = 0, shakeY = 0;
@@ -2078,7 +2183,12 @@
   function inGoal() {
     const p = car.chassis.getPosition();
     const g = meta.goal;
-    return p.x >= g.x && p.x <= g.x + g.w && p.y >= g.y - 0.2 && p.y <= g.y + g.h;
+    if (!(p.x >= g.x && p.x <= g.x + g.w && p.y >= g.y - 0.2 && p.y <= g.y + g.h)) return false;
+    if (g.stop || g.maxVx != null) {
+      const vx = Math.abs(car.chassis.getLinearVelocity().x);
+      if (vx > (g.maxVx != null ? g.maxVx : 3.0)) return false;
+    }
+    return true;
   }
 
   function starCount(time, cargoOk, partsOk) {
@@ -2236,11 +2346,48 @@
     while (a < -Math.PI) a += Math.PI * 2;
     return a;
   }
+  function applyTapBot() {
+    const pulse = 0.50, on = 0.20;
+    const phase = tRun % pulse;
+    gasHeld = phase < on;
+    gasStrength = gasHeld ? 1 : 0;
+    brakeHeld = false;
+    brakeStrength = 0;
+    car.gas = gasStrength;
+    car.brake = 0;
+  }
+  function applyFullBot() {
+    gasHeld = true; gasStrength = 1;
+    brakeHeld = false; brakeStrength = 0;
+    car.gas = 1; car.brake = 0;
+  }
+  function applyNeverBrakeBot() {
+    // 地面滿油、騰空收油，全程不煞車
+    const p = car.chassis.getPosition();
+    const wr = car.rear && car.rear.body ? car.rear.body.getPosition() : p;
+    const wf = car.front && car.front.body ? car.front.body.getPosition() : p;
+    const air = (wr.y > p.y - 0.12) && (wf.y > p.y - 0.12);
+    if (air) {
+      gasHeld = false; gasStrength = 0;
+    } else {
+      gasHeld = true; gasStrength = 1;
+    }
+    brakeHeld = false; brakeStrength = 0;
+    car.gas = gasStrength;
+    car.brake = 0;
+  }
   function applyBot() {
     if (!car) return;
+    if (botStyle === "full") { applyFullBot(); return; }
+    if (botStyle === "neverBrake") { applyNeverBrakeBot(); return; }
+    if (botStyle === "tap") { applyTapBot(); return; }
     const p = car.chassis.getPosition();
     const v = car.chassis.getLinearVelocity();
-    const want = targetSpeed(p.x);
+    let want = targetSpeed(p.x);
+    if (meta && meta.goal && meta.goal.stop) {
+      const d = meta.goal.x - p.x;
+      if (d < 9) want = Math.min(want, 1.15 + Math.max(0, d) * 0.28);
+    }
     const err = want - v.x;
     const pitch = wrapAng(car.chassis.getAngle());
     const ang = Math.abs(pitch);
@@ -3825,9 +3972,10 @@
   function beatLevel(id, opts) {
     opts = opts || {};
     const L = levelById(id);
-    const saved = { st: st, botMode: botMode, gasHeld: gasHeld, brakeHeld: brakeHeld, gasStrength: gasStrength, brakeStrength: brakeStrength };
+    const saved = { st: st, botMode: botMode, botStyle: botStyle, gasHeld: gasHeld, brakeHeld: brakeHeld, gasStrength: gasStrength, brakeStrength: brakeStrength };
     setupLevel(id, {});
     botMode = true;
+    botStyle = opts.driver || "skilled";
     st = "play";
     const limit = opts.limit || 90;
     const maxSteps = Math.ceil(limit / CFG.TICK);
@@ -3848,10 +3996,12 @@
       cargoOk: result ? result.cargoOk : true,
       partsOk: result ? result.partsOk : true,
       broken: brokenCount,
-      dmg: dmg
+      dmg: dmg,
+      driver: botStyle
     };
     // 恢復選單狀態，避免檢查污染畫面
     botMode = saved.botMode;
+    botStyle = saved.botStyle;
     gasHeld = saved.gasHeld; brakeHeld = saved.brakeHeld;
     gasStrength = saved.gasStrength; brakeStrength = saved.brakeStrength;
     st = "menu";
@@ -3859,10 +4009,13 @@
     return out;
   }
 
-  function beatAll() {
+  function beatAll(opts) {
     const rows = [];
-    for (let i = 0; i < LEVELS.length; i++) rows.push(beatLevel(LEVELS[i].id));
-    return { ok: rows.every(function (r) { return r.ok; }), rows: rows };
+    for (let i = 0; i < LEVELS.length; i++) rows.push(beatLevel(LEVELS[i].id, opts));
+    return { ok: rows.every(function (r) { return r.ok; }), rows: rows, driver: (opts && opts.driver) || "skilled" };
+  }
+  function challengeAll(driver, opts) {
+    return beatAll(Object.assign({}, opts || {}, { driver: driver || "full" }));
   }
 
   window.__WENDANG__ = {
@@ -3874,6 +4027,7 @@
     showMenu: showMenu,
     beatLevel: beatLevel,
     beatAll: beatAll,
+    challengeAll: challengeAll,
     setDamage: applySetDamage,
     traceLevel: function (id, seconds) {
       setupLevel(id, {});
